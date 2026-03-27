@@ -16,9 +16,14 @@
 namespace {
 struct VertexData
 {
-    QVector3D position;
-    QVector3D normal;
-    QVector2D texCoord;
+    float px = 0.0f;
+    float py = 0.0f;
+    float pz = 0.0f;
+    float nx = 0.0f;
+    float ny = 1.0f;
+    float nz = 0.0f;
+    float tu = 0.0f;
+    float tv = 0.0f;
 };
 
 struct VertexKey
@@ -125,6 +130,7 @@ bool MeshLoader::loadFile(const QString &filePath)
     const QString suffix = QFileInfo(filePath).suffix().toLower();
     bool ok = false;
 
+    qDebug() << "MeshLoader loading" << filePath << "as" << suffix;
     if (suffix == QLatin1String("obj")) {
         ok = loadObj(filePath);
     } else if (suffix == QLatin1String("stl")) {
@@ -136,8 +142,12 @@ bool MeshLoader::loadFile(const QString &filePath)
         return false;
     }
 
-    if (ok)
+    if (ok) {
         setError(QString());
+        qDebug() << "MeshLoader load success" << filePath;
+    } else {
+        qWarning() << "MeshLoader load failed" << filePath << m_error;
+    }
 
     return ok;
 }
@@ -294,7 +304,13 @@ bool MeshLoader::loadStlAscii(QFile &file)
     QTextStream stream(&file);
     stream.setEncoding(QStringConverter::Utf8);
 
-    QVector<VertexData> vertices;
+    struct TempVertex
+    {
+        QVector3D position;
+        QVector3D normal;
+        QVector2D texCoord;
+    };
+    QVector<TempVertex> vertices;
     QVector<unsigned int> indices;
 
     QVector3D normal;
@@ -307,7 +323,7 @@ bool MeshLoader::loadStlAscii(QFile &file)
         const QVector3D computedNormal = QVector3D::normal(tri[0], tri[1], tri[2]);
         const QVector3D faceNormal = normal.isNull() ? computedNormal : normal.normalized();
         for (int i = 0; i < 3; ++i) {
-            VertexData vd;
+            TempVertex vd;
             vd.position = tri[i];
             vd.normal = faceNormal;
             vd.texCoord = QVector2D();
@@ -560,22 +576,9 @@ void MeshLoader::uploadMesh(const QVector<QVector3D> &positions,
     QVector<QVector2D> fullTexCoords = texCoords;
     if (fullTexCoords.size() != positions.size())
         fullTexCoords.resize(positions.size());
-
-    QByteArray vertexBuffer;
-    vertexBuffer.resize(positions.size() * sizeof(VertexData));
-    auto *vertexData = reinterpret_cast<VertexData *>(vertexBuffer.data());
-    for (int i = 0; i < positions.size(); ++i) {
-        vertexData[i].position = positions.at(i);
-        const QVector3D n = normals.at(i);
-        vertexData[i].normal = n.isNull() ? QVector3D(0, 1, 0) : n.normalized();
-        vertexData[i].texCoord = i < fullTexCoords.size() ? fullTexCoords.at(i) : QVector2D();
-    }
-
-    QByteArray indexBuffer;
-    indexBuffer.resize(indices.size() * sizeof(quint32));
-    auto *indexData = reinterpret_cast<quint32 *>(indexBuffer.data());
-    for (int i = 0; i < indices.size(); ++i)
-        indexData[i] = indices.at(i);
+    qDebug() << "uploadMesh positions" << positions.size()
+             << "indices" << indices.size()
+             << "texcoords" << fullTexCoords.size();
 
     QVector3D minPoint(std::numeric_limits<float>::max(),
                        std::numeric_limits<float>::max(),
@@ -592,23 +595,64 @@ void MeshLoader::uploadMesh(const QVector<QVector3D> &positions,
         maxPoint.setZ(qMax(maxPoint.z(), pos.z()));
     }
 
-    m_boundsMin = minPoint;
-    m_boundsMax = maxPoint;
-    m_boundsCenter = computeBoundsCenter(minPoint, maxPoint);
-    m_boundingRadius = (maxPoint - minPoint).length() * 0.5f;
+    const QVector3D centerOffset = computeBoundsCenter(minPoint, maxPoint);
+    QVector3D centeredMin(std::numeric_limits<float>::max(),
+                          std::numeric_limits<float>::max(),
+                          std::numeric_limits<float>::max());
+    QVector3D centeredMax(std::numeric_limits<float>::lowest(),
+                          std::numeric_limits<float>::lowest(),
+                          std::numeric_limits<float>::lowest());
+
+    QByteArray vertexBuffer;
+    vertexBuffer.resize(positions.size() * sizeof(VertexData));
+    auto *vertexData = reinterpret_cast<VertexData *>(vertexBuffer.data());
+    for (int i = 0; i < positions.size(); ++i) {
+        const QVector3D pos = positions.at(i) - centerOffset;
+        const QVector3D n = normals.at(i).isNull() ? QVector3D(0, 1, 0) : normals.at(i).normalized();
+        const QVector2D tex = i < fullTexCoords.size() ? fullTexCoords.at(i) : QVector2D();
+        vertexData[i].px = pos.x();
+        vertexData[i].py = pos.y();
+        vertexData[i].pz = pos.z();
+        vertexData[i].nx = n.x();
+        vertexData[i].ny = n.y();
+        vertexData[i].nz = n.z();
+        vertexData[i].tu = tex.x();
+        vertexData[i].tv = tex.y();
+
+        centeredMin.setX(qMin(centeredMin.x(), pos.x()));
+        centeredMin.setY(qMin(centeredMin.y(), pos.y()));
+        centeredMin.setZ(qMin(centeredMin.z(), pos.z()));
+        centeredMax.setX(qMax(centeredMax.x(), pos.x()));
+        centeredMax.setY(qMax(centeredMax.y(), pos.y()));
+        centeredMax.setZ(qMax(centeredMax.z(), pos.z()));
+    }
+
+    QByteArray indexBuffer;
+    indexBuffer.resize(indices.size() * sizeof(quint32));
+    auto *indexData = reinterpret_cast<quint32 *>(indexBuffer.data());
+    for (int i = 0; i < indices.size(); ++i)
+        indexData[i] = indices.at(i);
+
+    m_boundsMin = centeredMin;
+    m_boundsMax = centeredMax;
+    m_boundsCenter = computeBoundsCenter(centeredMin, centeredMax);
+    m_boundingRadius = (centeredMax - centeredMin).length() * 0.5f;
+    qDebug() << "bounds" << m_boundsMin << m_boundsMax
+             << "center" << m_boundsCenter
+             << "radius" << m_boundingRadius;
 
     clear();
     setVertexData(vertexBuffer);
     setIndexData(indexBuffer);
     setStride(sizeof(VertexData));
     addAttribute(QQuick3DGeometry::Attribute::PositionSemantic,
-                 offsetof(VertexData, position),
+                 offsetof(VertexData, px),
                  QQuick3DGeometry::Attribute::F32Type);
     addAttribute(QQuick3DGeometry::Attribute::NormalSemantic,
-                 offsetof(VertexData, normal),
+                 offsetof(VertexData, nx),
                  QQuick3DGeometry::Attribute::F32Type);
     addAttribute(QQuick3DGeometry::Attribute::TexCoord0Semantic,
-                 offsetof(VertexData, texCoord),
+                 offsetof(VertexData, tu),
                  QQuick3DGeometry::Attribute::F32Type);
     setPrimitiveType(QQuick3DGeometry::PrimitiveType::Triangles);
     setBounds(m_boundsMin, m_boundsMax);
@@ -619,6 +663,8 @@ void MeshLoader::uploadMesh(const QVector<QVector3D> &positions,
         emit hasDataChanged();
     }
     emit boundsChanged();
+    qDebug() << "mesh bounds" << m_boundsMin << m_boundsMax << indices.size() / 3 << "triangles";
+
 }
 
 void MeshLoader::computeNormals(QVector<QVector3D> &normals,

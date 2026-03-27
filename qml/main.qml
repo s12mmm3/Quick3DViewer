@@ -13,6 +13,7 @@ ApplicationWindow {
     visible: true
     color: "#101014"
     property url currentFile: ""
+    property bool useFreeCamera: false
     title: currentFile === "" ? qsTr("Q3D Viewer")
                                : qsTr("Q3D Viewer - %1").arg(fileNameFromUrl(currentFile))
 
@@ -21,14 +22,40 @@ ApplicationWindow {
         return parts.length > 0 ? parts[parts.length - 1] : url.toString();
     }
 
+    function fitView(boundsMin, boundsMax, radiusHint) {
+        if (!meshLoader.hasData)
+            return
+        const min = boundsMin
+        const max = boundsMax
+        const center = Qt.vector3d((min.x + max.x) * 0.5,
+                                   (min.y + max.y) * 0.5,
+                                   (min.z + max.z) * 0.5)
+        pivot.position = Qt.vector3d(-center.x, -center.y, -center.z)
+        const size = Qt.vector3d(max.x - min.x, max.y - min.y, max.z - min.z)
+        const longest = Math.max(size.x, Math.max(size.y, size.z))
+        const radius = Math.max(radiusHint, longest * 0.5, 1)
+        const fovRadians = Math.max(5, camera.fieldOfView) * Math.PI / 180
+        const fitDistance = radius / Math.tan(fovRadians * 0.5)
+        const targetDistance = Math.max(fitDistance * 1.2, 20)
+        orbitController.applyDistance(targetDistance)
+        cameraRig.position = Qt.vector3d(0, 0, 0)
+        cameraRig.eulerRotation = Qt.vector3d(0, 0, 0)
+        if (window.useFreeCamera)
+            window.useFreeCamera = false
+        orbitController.resetView()
+        camera.clipNear = Math.max(targetDistance / 500.0, 0.05)
+        camera.clipFar = Math.max(targetDistance * 10.0, 5000)
+        console.info("fitView", min, max, "radius", radius,
+                     "distance", targetDistance,
+                     "clip", camera.clipNear, camera.clipFar)
+    }
+
     MeshLoader {
         id: meshLoader
         onBoundsChanged: {
             if (!meshLoader.hasData)
                 return
-            pivot.position = Qt.vector3d(-boundsCenter.x, -boundsCenter.y, -boundsCenter.z)
-            const radius = Math.max(boundingRadius, 1)
-            orbitController.applyDistance(Math.max(radius * 3, 20))
+            fitView(boundsMin, boundsMax, boundingRadius)
         }
     }
 
@@ -44,6 +71,19 @@ ApplicationWindow {
                 text: qsTr("重置视图")
                 enabled: meshLoader.hasData
                 onClicked: orbitController.resetView()
+            }
+            ToolButton {
+                text: qsTr("适配")
+                enabled: meshLoader.hasData
+                onClicked: fitView(meshLoader.boundsMin, meshLoader.boundsMax, meshLoader.boundingRadius)
+            }
+            ToolButton {
+                checkable: true
+                checked: window.useFreeCamera
+                text: window.useFreeCamera ? qsTr("自由视角") : qsTr("轨道视角")
+                onToggled: window.useFreeCamera = checked
+                ToolTip.visible: hovered
+                ToolTip.text: qsTr("切换鼠标自由移动（按住右键拖动，滚轮调整速度）")
             }
             Label {
                 Layout.fillWidth: true
@@ -81,20 +121,34 @@ ApplicationWindow {
             Layout.fillWidth: true
             Layout.fillHeight: true
             focus: true
+            camera: camera
             environment: SceneEnvironment {
-                clearColor: "#101014"
+                clearColor: "#2b2b30"
                 backgroundMode: SceneEnvironment.Color
                 tonemapMode: SceneEnvironment.TonemapModeFilmic
                 antialiasingMode: SceneEnvironment.MSAA
                 antialiasingQuality: SceneEnvironment.High
             }
 
-            PerspectiveCamera {
-                id: camera
-                position: Qt.vector3d(0, 0, 400)
-                fieldOfView: 45
-                clipNear: 0.1
-                clipFar: 20000
+            // Model {
+            //     source: "#Sphere"
+            //     scale: Qt.vector3d(10, 10, 10)
+            //     materials: PrincipledMaterial { baseColor: "#ff7777" }
+            // }
+
+
+
+            Node {
+                id: cameraRig
+                position: Qt.vector3d(0, 0, 0)
+
+                PerspectiveCamera {
+                    id: camera
+                    position: Qt.vector3d(0, 0, 400)
+                    fieldOfView: 45
+                    clipNear: 0.1
+                    clipFar: 20000
+                }
             }
 
             Node { id: pivot }
@@ -118,14 +172,16 @@ ApplicationWindow {
                     baseColor: "#d9d9d9"
                     metalness: 0.0
                     roughness: 0.35
+                    cullMode: Material.NoCulling
                 }
             }
 
             OrbitCameraController {
                 id: orbitController
                 anchors.fill: parent
-                origin: pivot
+                origin: cameraRig
                 camera: camera
+                enabled: !window.useFreeCamera
                 xSpeed: 0.005
                 ySpeed: 0.005
                 property real defaultDistance: 400
@@ -140,9 +196,30 @@ ApplicationWindow {
                     applyDistance(targetDistance)
                 }
             }
+            WasdController {
+                id: freeController
+                anchors.fill: parent
+                controlledObject: cameraRig
+                visible: window.useFreeCamera
+                mouseEnabled: window.useFreeCamera
+                keysEnabled: window.useFreeCamera
+                acceptedButtons: Qt.RightButton
+                speed: 0.0025
+                shiftSpeed: 0.01
+                forwardSpeed: 0.0025
+                backSpeed: 0.0025
+                rightSpeed: 0.0025
+                leftSpeed: 0.0025
+                upSpeed: 0.0025
+                downSpeed: 0.0025
+                xSpeed: 0.003
+                ySpeed: 0.003
+            }
             Connections {
                 target: meshLoader
                 function onHasDataChanged() {
+                    model.geometry = null
+                    model.geometry = meshLoader
                     if (!meshLoader.hasData) {
                         pivot.position = Qt.vector3d(0, 0, 0)
                         orbitController.applyDistance(orbitController.defaultDistance)
