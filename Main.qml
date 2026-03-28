@@ -295,35 +295,52 @@ ApplicationWindow {
         }
     }
 
-    header: ToolBar {
-        RowLayout {
-            anchors.fill: parent
-            ToolButton {
-                text: qsTr("打开…")
+    menuBar: MenuBar {
+        Menu {
+            title: qsTr("&File")
+            Action {
+                text: qsTr("&Open...")
                 icon.name: "document-open"
-                onClicked: openDialog.open()
+                onTriggered: openDialog.open()
             }
-            ToolButton {
-                text: qsTr("适配")
+            Action { text: qsTr("&Save") }
+            Action { text: qsTr("Save &As...") }
+            MenuSeparator { }
+            Action { text: qsTr("&Quit") }
+        }
+        // Menu {
+        //     title: qsTr("&Edit")
+        //     Action { text: qsTr("Cu&t") }
+        //     Action { text: qsTr("&Copy") }
+        //     Action { text: qsTr("&Paste") }
+        // }
+
+        Menu {
+            title: qsTr("&View")
+            Action {
+                text: qsTr("&Fit")
                 enabled: sceneController.hasVisibleData
-                onClicked: fitSceneToVisible()
+                onTriggered: fitSceneToVisible()
             }
-            RowLayout {
-                spacing: 2
-                ToolButton { text: qsTr("前"); onClicked: setCameraPreset("front") }
-                ToolButton { text: qsTr("后"); onClicked: setCameraPreset("back") }
-                ToolButton { text: qsTr("左"); onClicked: setCameraPreset("left") }
-                ToolButton { text: qsTr("右"); onClicked: setCameraPreset("right") }
-                ToolButton { text: qsTr("上"); onClicked: setCameraPreset("top") }
-                ToolButton { text: qsTr("下"); onClicked: setCameraPreset("bottom") }
+            MenuSeparator {}
+            Repeater {
+                model: [
+                    { text: qsTr("Front"), value: "front" },
+                    { text: qsTr("Back"), value: "back" },
+                    { text: qsTr("Left"), value: "left" },
+                    { text: qsTr("Right"), value: "right" },
+                    { text: qsTr("Top"), value: "top" },
+                    { text: qsTr("Bottom"), value: "bottom" },
+                ]
+                MenuItem {
+                    text: modelData.text
+                    onTriggered: setCameraPreset(modelData.value)
+                }
             }
-            Label {
-                Layout.fillWidth: true
-                elide: Label.ElideRight
-                text: sceneController.hasVisibleData ?
-                          qsTr("已加载 %1 个模型").arg(sceneController.meshes.length) :
-                          qsTr("拖拽或打开 PLY/STL/OBJ 文件")
-            }
+        }
+        Menu {
+            title: qsTr("&Help")
+            Action { text: qsTr("&About") }
         }
     }
 
@@ -561,6 +578,14 @@ ApplicationWindow {
                               .arg(Number(sceneController.boundsCenter.z).toFixed(2))
                               .arg(Number(sceneController.boundingRadius).toFixed(2)) :
                           qsTr("准备就绪")
+            }
+
+            Label {
+                Layout.fillWidth: true
+                elide: Label.ElideRight
+                text: sceneController.hasVisibleData ?
+                          qsTr("已加载 %1 个模型").arg(sceneController.meshes.length) :
+                          qsTr("拖拽或打开 PLY/STL/OBJ 文件")
             }
         }
     }
