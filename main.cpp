@@ -1,4 +1,7 @@
+#include "app/app.h"
+#include "app/apptool.h"
 #include "mesh/meshloader.h"
+#include "app/apptool.h"
 #include "dumpcatcher.h"
 #include "globalconst.h"
 #include "manager/logmgr.h"
@@ -27,6 +30,8 @@ void registerTypes()
 
 bool contextPropertys(QQmlEngine& engine)
 {
+    engine.rootContext()->setContextProperty("$app", App::instance());
+    engine.rootContext()->setContextProperty("$tool", AppTool::instance());
     engine.rootContext()->setContextProperty("$logmgr", LogMgr::instance());
     return true;
 }
@@ -56,6 +61,8 @@ int main(int argc, char *argv[])
 
     QQmlApplicationEngine engine;
     contextPropertys(engine);
+    App::instance()->set_qmlEngine(&engine);
+    App::instance()->setSystemLanguage();
     engine.load(QUrl("qrc:/Main.qml"));
     if (engine.rootObjects().isEmpty())
         return -1;

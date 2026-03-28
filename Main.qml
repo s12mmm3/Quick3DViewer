@@ -58,9 +58,11 @@ ApplicationWindow {
         }
 
         function addSources(list) {
-            if (!list)
+            if (!list || !$tool)
                 return;
-            let urls = list
+            const urls = $tool.collectModelFiles(list);
+            if (!urls || urls.length === 0)
+                return;
             for (let i = 0; i < urls.length; ++i)
                 addSingle(urls[i]);
         }
@@ -404,6 +406,11 @@ ApplicationWindow {
                 icon.name: "document-open"
                 onTriggered: openDialog.open()
             }
+            Action {
+                text: qsTr("Open &Folder...")
+                icon.name: "folder-open"
+                onTriggered: folderDialog.open()
+            }
             Action { text: qsTr("&Save") }
             Action { text: qsTr("Save &As...") }
             MenuSeparator { }
@@ -460,6 +467,15 @@ ApplicationWindow {
         onAccepted: {
             const list = selectedFiles.length > 0 ? selectedFiles : [selectedFile]
             sceneController.addSources(list)
+        }
+    }
+
+    FolderDialog {
+        id: folderDialog
+        title: qsTr("选择模型文件夹")
+        onAccepted: {
+            if (folderDialog.selectedFolder && folderDialog.selectedFolder !== "")
+                sceneController.addSources([folderDialog.selectedFolder])
         }
     }
 
