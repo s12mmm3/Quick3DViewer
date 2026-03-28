@@ -38,6 +38,7 @@ public:
 
     Q_INVOKABLE QVariantList collectModelFiles(const QVariantList &sources);
     Q_INVOKABLE bool isSupportedModelFile(const QUrl &url) const;
+    Q_INVOKABLE QString fileNameFromSource(const QVariant &source) const;
 };
 }
 

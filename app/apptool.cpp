@@ -12,10 +12,13 @@
 #include <QDir>
 #include <QDirIterator>
 #include <QSet>
+#include <QTemporaryFile>
+#include <QVariant>
 
 using namespace UINamespace;
 
 namespace {
+
 const QSet<QString> &supportedModelSuffixes()
 {
     static const QSet<QString> suffixes = {
@@ -28,17 +31,28 @@ const QSet<QString> &supportedModelSuffixes()
     return suffixes;
 }
 
+QString suffixFromFileName(const QString &fileName)
+{
+    return QFileInfo(fileName).suffix().toLower();
+}
+
 bool isSupportedFileInfo(const QFileInfo &info)
 {
     return info.exists() && info.isFile() &&
            supportedModelSuffixes().contains(info.suffix().toLower());
 }
 
+bool isSupportedSuffix(const QString &suffix)
+{
+    return supportedModelSuffixes().contains(suffix.toLower());
+}
+
 QUrl toLocalFileUrl(const QString &path)
 {
     return QUrl::fromLocalFile(QDir::cleanPath(path));
 }
-}
+
+} // namespace
 
 Q_GLOBAL_STATIC(AppTool, appTool)
 AppTool *AppTool::instance()
@@ -183,27 +197,17 @@ QVariantList AppTool::collectModelFiles(const QVariantList &sources)
             result.append(toLocalFileUrl(info.absoluteFilePath()));
     };
 
-    auto appendFromUrl = [&](const QUrl &url) {
+    auto appendNonLocal = [&](const QUrl &url) {
         if (!url.isValid())
             return;
-        if (url.isLocalFile() || url.scheme().isEmpty()) {
-            const QString localPath = url.isLocalFile() ? url.toLocalFile() : url.toString();
-            appendFromLocalPath(localPath);
+        const QString fileName = url.fileName();
+        const QString suffix = suffixFromFileName(fileName.isEmpty() ? url.path() : fileName);
+        if (!isSupportedSuffix(suffix))
             return;
-        }
-        QFileInfo info(url.path());
-        if (isSupportedFileInfo(info))
-            result.append(url);
+        result.append(url);
     };
 
     for (const QVariant &value : sources) {
-        if (value.canConvert<QString>()) {
-            const QString str = value.toString();
-            if (!str.isEmpty() && QFileInfo::exists(str)) {
-                appendFromLocalPath(str);
-                continue;
-            }
-        }
         QUrl url;
         if (value.canConvert<QUrl>())
             url = value.toUrl();
@@ -211,7 +215,17 @@ QVariantList AppTool::collectModelFiles(const QVariantList &sources)
             url = QUrl(value.toString());
         else
             continue;
-        appendFromUrl(url);
+
+        if (!url.isValid())
+            continue;
+
+        if (url.isLocalFile() || url.scheme().isEmpty()) {
+            const QString localPath = url.isLocalFile() ? url.toLocalFile()
+                                                        : QUrl::fromUserInput(url.toString()).toLocalFile();
+            appendFromLocalPath(localPath.isEmpty() ? url.toString() : localPath);
+        } else {
+            appendNonLocal(url);
+        }
     }
 
     return result;
@@ -226,4 +240,31 @@ bool AppTool::isSupportedModelFile(const QUrl &url) const
         return isSupportedFileInfo(QFileInfo(path));
     }
     return isSupportedFileInfo(QFileInfo(url.path()));
+}
+
+QString AppTool::fileNameFromSource(const QVariant &source) const
+{
+    QUrl url;
+    if (source.canConvert<QUrl>())
+        url = source.toUrl();
+    else if (source.canConvert<QString>())
+        url = QUrl(source.toString());
+
+    if (url.isValid()) {
+        if (url.isLocalFile())
+            return QFileInfo(url.toLocalFile()).fileName();
+
+        QString name = url.fileName();
+        if (name.isEmpty())
+            name = QFileInfo(url.path()).fileName();
+        if (!name.isEmpty())
+            return name;
+    }
+
+    const QString fallback = source.toString();
+    const QString baseName = QFileInfo(fallback).fileName();
+    if (!baseName.isEmpty())
+        return baseName;
+
+    return fallback;
 }

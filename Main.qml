@@ -15,11 +15,6 @@ ApplicationWindow {
     title: qsTr("Q3DViewer")
 
 
-    function fileNameFromUrl(url) {
-        const parts = url.toString().split("/");
-        return parts.length > 0 ? parts[parts.length - 1] : url.toString();
-    }
-
     property real lastFitDistance: 400
     property vector3d lastFitCenter: Qt.vector3d(0, 0, 0)
     property real minCameraDistance: 1
@@ -84,7 +79,7 @@ ApplicationWindow {
                 itemId: nextId++,
                 loader: loader,
                 sourceUrl: source,
-                displayName: window.fileNameFromUrl(source),
+                displayName: $tool ? $tool.fileNameFromSource(source) : "",
                 visibleFlag: true,
                 opacityValue: 1.0,
                 autoFitPending: true
