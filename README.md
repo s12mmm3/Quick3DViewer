@@ -1,8 +1,12 @@
 # Quick3DViewer
 
-基于 Qt Quick 3D 的跨平台轻量模型浏览器
+基于 Qt Quick 3D 的跨平台模型浏览器
 
 Quick3DViewer is a cross-platform model viewer built with Qt Quick 3D.
+
+<p align=center>
+    <img alt="Screenshot" src="./static/screenshot.png">
+</p>
 
 ## 功能 Features
 
