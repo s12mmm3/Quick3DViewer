@@ -1,4 +1,5 @@
-#pragma once
+#ifndef MESHLOADER_H
+#define MESHLOADER_H
 
 #include "definevaluehelper.h"
 
@@ -50,3 +51,5 @@ private:
     QVector<unsigned int> sanitizeIndices(const QVector<unsigned int> &indices,
                                           const QVector<QVector3D> &positions) const;
 };
+
+#endif // MESHLOADER_H

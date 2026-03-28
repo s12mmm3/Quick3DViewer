@@ -1,4 +1,5 @@
-#pragma once
+#ifndef MESHIMPORTHELPER_H
+#define MESHIMPORTHELPER_H
 
 #include <QUrl>
 #include <QVector>
@@ -15,6 +16,16 @@ struct MeshImportResult
     QUrl texture;
 };
 
+class AbstractMeshImporter
+{
+public:
+    virtual ~AbstractMeshImporter() = default;
+    virtual bool canLoad(const QString &suffix) const = 0;
+    virtual bool load(const QString &filePath,
+                      MeshImportResult &result,
+                      QString *errorOut) const = 0;
+};
+
 class MeshImportHelper
 {
 public:
@@ -22,3 +33,5 @@ public:
                      MeshImportResult &result,
                      QString *errorOut = nullptr);
 };
+
+#endif // MESHIMPORTHELPER_H

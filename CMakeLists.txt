@@ -32,7 +32,7 @@ endif()
 
 qt_standard_project_setup(REQUIRES 6.8)
 
-FILE(GLOB SOURCES "./*.h" "./*.cpp" "./*.qrc" "manager/*" "task/*" "app/*" "src/*")
+FILE(GLOB SOURCES "./*.h" "./*.cpp" "./*.qrc" "manager/*" "task/*" "app/*" "mesh/*")
 qt_add_executable(${PROJECT_NAME} WIN32 MACOSX_BUNDLE
     ${SOURCES}
     "logo.icns"
