@@ -12,10 +12,8 @@ ApplicationWindow {
     height: 720
     visible: true
     color: "#101014"
-    property url currentFile: ""
-    property bool useFreeCamera: true
-    title: currentFile === "" ? qsTr("Q3D Viewer")
-                               : qsTr("Q3D Viewer - %1").arg(fileNameFromUrl(currentFile))
+    title: qsTr("Q3DViewer")
+
 
     function fileNameFromUrl(url) {
         const parts = url.toString().split("/");
@@ -108,7 +106,6 @@ ApplicationWindow {
             loader.errorStringChanged.connect(sceneController.refreshErrorMessage);
             loader.source = source;
 
-            window.currentFile = source;
             recalculateBounds();
             refreshErrorMessage();
         }
@@ -236,6 +233,15 @@ ApplicationWindow {
         cameraRig.eulerRotation = Qt.vector3d(orbitPitch, orbitYaw, 0)
     }
 
+    function normalizeAngle(angle) {
+        let value = angle % 360
+        if (value > 180)
+            value -= 360
+        else if (value < -180)
+            value += 360
+        return value
+    }
+
     function setCameraDistance(distance) {
         const clamped = Math.min(maxCameraDistance, Math.max(minCameraDistance, distance))
         lastFitDistance = clamped
@@ -248,8 +254,8 @@ ApplicationWindow {
         if (!sceneController.hasVisibleData)
             return
         const sensitivity = 0.3
-        orbitYaw = orbitYaw - deltaX * sensitivity
-        orbitPitch = Math.max(-89.5, Math.min(89.5, orbitPitch - deltaY * sensitivity))
+        orbitYaw = normalizeAngle(orbitYaw - deltaX * sensitivity)
+        orbitPitch = normalizeAngle(orbitPitch - deltaY * sensitivity)
         applyOrbitRotation()
     }
 
@@ -338,9 +344,6 @@ ApplicationWindow {
         const fitDistance = radius / Math.tan(fovRadians * 0.5)
         const targetDistance = Math.max(fitDistance * 1.2, 20)
         cameraRig.position = center
-        orbitYaw = 0
-        orbitPitch = 0
-        applyOrbitRotation()
         setCameraDistance(targetDistance)
         console.info("fitView", min, max, "radius", radius,
                      "distance", targetDistance,
@@ -376,6 +379,8 @@ ApplicationWindow {
         case "bottom":
             rotation = Qt.vector3d(90, 0, 0)
             break
+        default:
+            break
         }
         cameraRig.position = window.lastFitCenter
         orbitPitch = rotation.x
@@ -386,10 +391,8 @@ ApplicationWindow {
     Connections {
         target: cameraRig
         function onPositionChanged() {
-            if (window.useFreeCamera) {
-                const distance = Math.max(camera.position.length(), 1)
-                updateCameraClip(distance)
-            }
+            const distance = Math.max(camera.position.length(), 1)
+            updateCameraClip(distance)
         }
     }
 
@@ -426,12 +429,12 @@ ApplicationWindow {
             MenuSeparator {}
             Repeater {
                 model: [
-                    { text: qsTr("Front"), value: "front" },
-                    { text: qsTr("Back"), value: "back" },
-                    { text: qsTr("Left"), value: "left" },
-                    { text: qsTr("Right"), value: "right" },
-                    { text: qsTr("Top"), value: "top" },
-                    { text: qsTr("Bottom"), value: "bottom" },
+                    { text: qsTr("Front"),   value: "front",   },
+                    { text: qsTr("Back"),    value: "back",    },
+                    { text: qsTr("Left"),    value: "left",    },
+                    { text: qsTr("Right"),   value: "right",   },
+                    { text: qsTr("Top"),     value: "top",     },
+                    { text: qsTr("Bottom"),  value: "bottom",  },
                 ]
                 MenuItem {
                     text: modelData.text
@@ -456,8 +459,6 @@ ApplicationWindow {
         ]
         onAccepted: {
             const list = selectedFiles.length > 0 ? selectedFiles : [selectedFile]
-            const first = list.length > 0 ? list[0] : ""
-            window.currentFile = first ? first : ""
             sceneController.addSources(list)
         }
     }
@@ -703,7 +704,6 @@ ApplicationWindow {
                     anchors.fill: parent
                     onDropped: (event) => {
                         if (event.hasUrls) {
-                            window.currentFile = event.urls[0]
                             sceneController.addSources(event.urls)
                             event.acceptProposedAction()
                         }
@@ -852,6 +852,7 @@ ApplicationWindow {
             }
 
             Label {
+                color: "#cfd8dc"
                 Layout.fillWidth: true
                 elide: Label.ElideRight
                 text: sceneController.hasVisibleData ?

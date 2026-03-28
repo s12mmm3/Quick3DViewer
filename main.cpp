@@ -1,6 +1,7 @@
 #include "meshloader.h"
 #include "dumpcatcher.h"
 #include "globalconst.h"
+#include "manager/logmgr.h"
 
 #include <QGuiApplication>
 #include <QQmlApplicationEngine>
@@ -26,6 +27,7 @@ void registerTypes()
 
 bool contextPropertys(QQmlEngine& engine)
 {
+    engine.rootContext()->setContextProperty("$logmgr", LogMgr::instance());
     return true;
 }
 
