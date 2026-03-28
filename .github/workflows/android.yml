@@ -16,20 +16,20 @@ jobs:
       # 矩阵配置
       matrix:
         include:
-          # 6.11.0
-          - qt_version: 6.11.0
+          # 6.10.2
+          - qt_version: 6.10.2
             qt_arch: linux_gcc_64
             modules: 'qthttpserver qtwebsockets qt3d qtquick3d qtquick3dphysics qtgraphs qtshadertools'
             cross_qt_arch: 'android_arm64_v8a'
-          # - qt_version: 6.11.0
+          # - qt_version: 6.10.2
           #   qt_arch: linux_gcc_64
           #   modules: 'qthttpserver qtwebsockets qt3d qtquick3d qtquick3dphysics qtgraphs qtshadertools'
           #   cross_qt_arch: 'android_armv7'
-          # - qt_version: 6.11.0
+          # - qt_version: 6.10.2
           #   qt_arch: linux_gcc_64
           #   modules: 'qthttpserver qtwebsockets qt3d qtquick3d qtquick3dphysics qtgraphs qtshadertools'
           #   cross_qt_arch: 'android_x86'
-          # - qt_version: 6.11.0
+          # - qt_version: 6.10.2
           #   qt_arch: linux_gcc_64
           #   modules: 'qthttpserver qtwebsockets qt3d qtquick3d qtquick3dphysics qtgraphs qtshadertools'
           #   cross_qt_arch: 'android_x86_64'
