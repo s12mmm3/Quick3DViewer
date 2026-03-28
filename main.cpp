@@ -10,6 +10,8 @@
 #include <QLoggingCategory>
 #include <QQuickWindow>
 #include <QSGRendererInterface>
+#include <QFontDatabase>
+#include <QFont>
 
 using namespace UINamespace;
 

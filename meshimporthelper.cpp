@@ -430,34 +430,88 @@ bool loadStlBinary(QFile &file,
     QVector<QVector3D> positions;
     QVector<QVector3D> normals;
     QVector<unsigned int> indices;
-    positions.reserve(triangleCount * 3);
-    normals.reserve(triangleCount * 3);
-    indices.reserve(triangleCount * 3);
 
-    for (quint32 i = 0; i < triangleCount; ++i) {
-        QVector3D normal;
-        QVector3D verts[3];
-        float nx = 0.0f;
-        float ny = 0.0f;
-        float nz = 0.0f;
-        in >> nx >> ny >> nz;
-        normal = QVector3D(nx, ny, nz);
-        for (int v = 0; v < 3; ++v) {
-            float vx = 0.0f;
-            float vy = 0.0f;
-            float vz = 0.0f;
-            in >> vx >> vy >> vz;
-            verts[v] = QVector3D(vx, vy, vz);
+    const qint64 dataStart = file.pos();
+    const quint64 payloadSize = static_cast<quint64>(file.size() - dataStart);
+    const quint64 floatStride = static_cast<quint64>(sizeof(float) * 12 + sizeof(quint16));  // 12 floats + attr
+    const quint64 doubleStride = static_cast<quint64>(sizeof(double) * 12 + sizeof(quint16));
+
+    enum class StlScalarMode {
+        Float32,
+        Float64
+    };
+
+    auto parseTriangles = [&](StlScalarMode mode) -> bool {
+        positions.clear();
+        normals.clear();
+        indices.clear();
+        positions.reserve(triangleCount * 3);
+        normals.reserve(triangleCount * 3);
+        indices.reserve(triangleCount * 3);
+
+        file.seek(dataStart);
+        in.resetStatus();
+
+        if (mode == StlScalarMode::Float32)
+            in.setFloatingPointPrecision(QDataStream::SinglePrecision);
+        else
+            in.setFloatingPointPrecision(QDataStream::DoublePrecision);
+
+        for (quint32 i = 0; i < triangleCount; ++i) {
+            double nx = 0.0;
+            double ny = 0.0;
+            double nz = 0.0;
+            in >> nx >> ny >> nz;
+
+            QVector3D normal(static_cast<float>(nx),
+                             static_cast<float>(ny),
+                             static_cast<float>(nz));
+
+            QVector3D verts[3];
+            for (int v = 0; v < 3; ++v) {
+                double vx = 0.0;
+                double vy = 0.0;
+                double vz = 0.0;
+                in >> vx >> vy >> vz;
+                verts[v] = QVector3D(static_cast<float>(vx),
+                                     static_cast<float>(vy),
+                                     static_cast<float>(vz));
+            }
+
+            quint16 attr = 0;
+            in >> attr;
+
+            if (in.status() != QDataStream::Ok)
+                return false;
+
+            const QVector3D computedNormal = QVector3D::normal(verts[0], verts[1], verts[2]);
+            const QVector3D faceNormal = normal.isNull() ? computedNormal : normal.normalized();
+            for (int v = 0; v < 3; ++v) {
+                positions.append(verts[v]);
+                normals.append(faceNormal);
+                indices.append(positions.size() - 1);
+            }
         }
-        quint16 attr = 0;
-        in >> attr;
-        const QVector3D computedNormal = QVector3D::normal(verts[0], verts[1], verts[2]);
-        const QVector3D faceNormal = normal.isNull() ? computedNormal : normal.normalized();
-        for (int v = 0; v < 3; ++v) {
-            positions.append(verts[v]);
-            normals.append(faceNormal);
-            indices.append(positions.size() - 1);
-        }
+
+        return true;
+    };
+
+    const quint64 expectedFloatBytes = static_cast<quint64>(triangleCount) * floatStride;
+    const quint64 expectedDoubleBytes = static_cast<quint64>(triangleCount) * doubleStride;
+
+    StlScalarMode preferredMode = StlScalarMode::Float32;
+    if (triangleCount > 0 && payloadSize == expectedDoubleBytes)
+        preferredMode = StlScalarMode::Float64;
+
+    bool parsed = parseTriangles(preferredMode);
+    if (!parsed && preferredMode == StlScalarMode::Float32) {
+        WARNING << "MeshImportHelper: loadStlBinary float parse failed, retrying as double";
+        parsed = parseTriangles(StlScalarMode::Float64);
+    }
+
+    if (!parsed) {
+        assignError(errorOut, QStringLiteral("Failed to read binary STL payload"));
+        return false;
     }
 
     result.positions = std::move(positions);

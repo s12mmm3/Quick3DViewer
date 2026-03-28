@@ -118,9 +118,9 @@ ApplicationWindow {
             if (index < 0)
                 return;
             const entry = meshListModel.get(index);
-            if (entry && entry.loader)
-                entry.loader.destroy();
+            const loader = entry ? entry.loader : null;
             meshListModel.remove(index);
+            Qt.callLater(() => { if (loader) loader.destroy() })
             recalculateBounds();
             refreshErrorMessage();
         }
