@@ -24,15 +24,22 @@ ApplicationWindow {
 
     property real lastFitDistance: 400
     property vector3d lastFitCenter: Qt.vector3d(0, 0, 0)
+    property real minCameraDistance: 1
+    property real maxCameraDistance: 500000
+    property real orbitYaw: 0
+    property real orbitPitch: 0
 
     Component {
         id: meshLoaderComponent
         MeshLoader { }
     }
 
+    ListModel {
+        id: meshListModel
+    }
+
     QtObject {
         id: sceneController
-        property var meshes: []
         property int nextId: 1
         property bool hasVisibleData: false
         property vector3d boundsMin: Qt.vector3d(0, 0, 0)
@@ -43,8 +50,13 @@ ApplicationWindow {
         property var pivotNode: null
         property var pendingSources: []
 
-        function copyMeshes() {
-            meshes = meshes.slice();
+        function indexOfMesh(id) {
+            for (let i = 0; i < meshListModel.count; ++i) {
+                const entry = meshListModel.get(i);
+                if (entry && entry.itemId === id)
+                    return i;
+            }
+            return -1;
         }
 
         function addSources(list) {
@@ -69,20 +81,25 @@ ApplicationWindow {
                 return;
             }
             const entry = {
-                id: nextId++,
+                itemId: nextId++,
                 loader: loader,
-                source: source,
-                name: window.fileNameFromUrl(source),
-                visible: true,
-                opacity: 1.0,
-                autoFitPending: meshes.length === 0
+                sourceUrl: source,
+                displayName: window.fileNameFromUrl(source),
+                visibleFlag: true,
+                opacityValue: 1.0,
+                autoFitPending: true
             };
-
+            meshListModel.append(entry);
+            const currentId = entry.itemId;
             const boundsChanged = function() {
                 sceneController.recalculateBounds();
-                if (entry.autoFitPending && loader.hasData) {
-                    entry.autoFitPending = false;
-                    window.fitSceneToVisible();
+                const idx = sceneController.indexOfMesh(currentId);
+                if (idx >= 0) {
+                    const row = meshListModel.get(idx);
+                    if (row.autoFitPending && loader.hasData) {
+                        meshListModel.setProperty(idx, "autoFitPending", false);
+                        window.fitSceneToVisible();
+                    }
                 }
             };
 
@@ -91,44 +108,34 @@ ApplicationWindow {
             loader.errorChanged.connect(sceneController.refreshErrorMessage);
             loader.source = source;
 
-            meshes = meshes.concat([entry]);
             window.currentFile = source;
             recalculateBounds();
             refreshErrorMessage();
         }
 
         function removeMesh(id) {
-            const remaining = [];
-            for (let i = 0; i < meshes.length; ++i) {
-                const entry = meshes[i];
-                if (entry.id === id) {
-                    if (entry.loader)
-                        entry.loader.destroy();
-                } else {
-                    remaining.push(entry);
-                }
-            }
-            meshes = remaining;
+            const index = indexOfMesh(id);
+            if (index < 0)
+                return;
+            const entry = meshListModel.get(index);
+            if (entry && entry.loader)
+                entry.loader.destroy();
+            meshListModel.remove(index);
             recalculateBounds();
             refreshErrorMessage();
         }
 
         function setVisible(id, visible) {
-            let changed = false;
-            for (let i = 0; i < meshes.length; ++i) {
-                const entry = meshes[i];
-                if (entry.id === id) {
-                    if (entry.visible !== visible) {
-                        entry.visible = visible;
-                        changed = true;
-                    }
-                    break;
-                }
-            }
-            if (changed) {
-                copyMeshes();
-                recalculateBounds();
-            }
+            const index = indexOfMesh(id);
+            if (index < 0)
+                return;
+            const entry = meshListModel.get(index);
+            if (!entry)
+                return;
+            if (entry.visibleFlag === visible)
+                return;
+            meshListModel.setProperty(index, "visibleFlag", visible);
+            recalculateBounds();
         }
 
         function registerPivot(node) {
@@ -145,38 +152,34 @@ ApplicationWindow {
         function reparentExistingLoaders() {
             if (!pivotNode)
                 return;
-            for (let i = 0; i < meshes.length; ++i) {
-                const entry = meshes[i];
-                if (entry.loader && entry.loader.parent !== pivotNode)
+            for (let i = 0; i < meshListModel.count; ++i) {
+                const entry = meshListModel.get(i);
+                if (entry && entry.loader && entry.loader.parent !== pivotNode)
                     entry.loader.parent = pivotNode;
             }
         }
 
         function setOpacity(id, opacity) {
             const value = Math.min(1.0, Math.max(0.05, opacity));
-            let changed = false;
-            for (let i = 0; i < meshes.length; ++i) {
-                const entry = meshes[i];
-                if (entry.id === id) {
-                    if (Math.abs(entry.opacity - value) > 0.0001) {
-                        entry.opacity = value;
-                        changed = true;
-                    }
-                    break;
-                }
-            }
-            if (changed)
-                copyMeshes();
+            const index = indexOfMesh(id);
+            if (index < 0)
+                return;
+            const entry = meshListModel.get(index);
+            if (!entry)
+                return;
+            if (Math.abs(entry.opacityValue - value) <= 0.0001)
+                return;
+            meshListModel.setProperty(index, "opacityValue", value);
         }
 
         function recalculateBounds() {
             let valid = false;
             let minPoint = null;
             let maxPoint = null;
-            for (let i = 0; i < meshes.length; ++i) {
-                const entry = meshes[i];
+            for (let i = 0; i < meshListModel.count; ++i) {
+                const entry = meshListModel.get(i);
                 const loader = entry.loader;
-                if (!entry.visible || !loader || !loader.hasData)
+                if (!entry.visibleFlag || !loader || !loader.hasData)
                     continue;
 
                 const min = loader.boundsMin;
@@ -218,8 +221,8 @@ ApplicationWindow {
 
         function refreshErrorMessage() {
             let message = "";
-            for (let i = 0; i < meshes.length; ++i) {
-                const loader = meshes[i].loader;
+            for (let i = 0; i < meshListModel.count; ++i) {
+                const loader = meshListModel.get(i).loader;
                 if (loader && loader.errorString.length > 0) {
                     message = loader.errorString;
                     break;
@@ -229,8 +232,75 @@ ApplicationWindow {
         }
     }
 
+    function applyOrbitRotation() {
+        cameraRig.eulerRotation = Qt.vector3d(orbitPitch, orbitYaw, 0)
+    }
+
+    function setCameraDistance(distance) {
+        const clamped = Math.min(maxCameraDistance, Math.max(minCameraDistance, distance))
+        lastFitDistance = clamped
+        camera.position = Qt.vector3d(0, 0, clamped)
+        updateCameraClip(clamped)
+        updateFreeCameraSettings(clamped)
+    }
+
+    function orbitCamera(deltaX, deltaY) {
+        if (!sceneController.hasVisibleData)
+            return
+        const sensitivity = 0.3
+        orbitYaw = orbitYaw - deltaX * sensitivity
+        orbitPitch = Math.max(-89.5, Math.min(89.5, orbitPitch - deltaY * sensitivity))
+        applyOrbitRotation()
+    }
+
+    function zoomByFactor(factor) {
+        if (!sceneController.hasVisibleData)
+            return
+        if (factor === 0)
+            return
+        const newDistance = Math.max(minCameraDistance,
+                                     Math.min(maxCameraDistance,
+                                              camera.position.length() * factor))
+        setCameraDistance(newDistance)
+    }
+
+    function zoomCamera(deltaValue) {
+        if (!sceneController.hasVisibleData)
+            return
+        if (deltaValue === 0)
+            return
+        const factor = Math.exp(-deltaValue * 0.0015)
+        zoomByFactor(factor)
+    }
+
+    function panCamera(deltaX, deltaY) {
+        if (!sceneController.hasVisibleData)
+            return
+        const height = Math.max(view3d.height, 1)
+        const width = Math.max(view3d.width, 1)
+        const distance = Math.max(camera.position.length(), minCameraDistance)
+        const fovRad = camera.fieldOfView * Math.PI / 180
+        const viewHeightAtDist = 2 * Math.tan(fovRad / 2) * distance
+        const viewWidthAtDist = viewHeightAtDist * width / height
+        const moveRight = -deltaX * (viewWidthAtDist / width)
+        const moveUp = deltaY * (viewHeightAtDist / height)
+        const rightVec = cameraRig.right
+        const upVec = cameraRig.up
+        const translation = Qt.vector3d(rightVec.x * moveRight + upVec.x * moveUp,
+                                        rightVec.y * moveRight + upVec.y * moveUp,
+                                        rightVec.z * moveRight + upVec.z * moveUp)
+        const newPos = Qt.vector3d(cameraRig.position.x + translation.x,
+                                   cameraRig.position.y + translation.y,
+                                   cameraRig.position.z + translation.z)
+        cameraRig.position = newPos
+    }
+
+    function restoreSceneFocus() {
+        if (view3d)
+            view3d.forceActiveFocus()
+    }
+
     function updateFreeCameraSettings(distance) {
-        lastFitDistance = distance
         const base = Math.max(distance * 0.02, 2)
         freeController.speed = base
         freeController.shiftSpeed = base * 3
@@ -268,10 +338,10 @@ ApplicationWindow {
         const fitDistance = radius / Math.tan(fovRadians * 0.5)
         const targetDistance = Math.max(fitDistance * 1.2, 20)
         cameraRig.position = center
-        camera.position = Qt.vector3d(0, 0, targetDistance)
-        cameraRig.eulerRotation = Qt.vector3d(0, 0, 0)
-        updateCameraClip(targetDistance)
-        updateFreeCameraSettings(targetDistance)
+        orbitYaw = 0
+        orbitPitch = 0
+        applyOrbitRotation()
+        setCameraDistance(targetDistance)
         console.info("fitView", min, max, "radius", radius,
                      "distance", targetDistance,
                      "clip", camera.clipNear, camera.clipFar)
@@ -308,9 +378,10 @@ ApplicationWindow {
             break
         }
         cameraRig.position = window.lastFitCenter
-        cameraRig.eulerRotation = rotation
-        camera.position = Qt.vector3d(0, 0, lastFitDistance)
-        updateCameraClip(lastFitDistance)
+        orbitPitch = rotation.x
+        orbitYaw = rotation.y
+        applyOrbitRotation()
+        setCameraDistance(lastFitDistance)
     }
     Connections {
         target: cameraRig
@@ -449,22 +520,26 @@ ApplicationWindow {
                 }
 
                 Repeater3D {
-                    model: sceneController.meshes
+                    model: meshListModel
                     delegate: Model {
                         id: meshModel
-                        required property var modelData
-                        property bool isTransparent: modelData.opacity < 0.999
-                        opacity: modelData.opacity
+                        required property int itemId
+                        required property var loader
+                        required property string displayName
+                        required property bool visibleFlag
+                        required property real opacityValue
+                        property bool isTransparent: opacityValue < 0.999
+                        opacity: opacityValue
                         parent: pivot
-                        visible: modelData.visible && modelData.loader && modelData.loader.hasData
-                        geometry: modelData.loader
+                        visible: visibleFlag && loader && loader.hasData
+                        geometry: loader
                         materials: PrincipledMaterial {
-                            baseColor: "#cfcfcf"
+                            baseColor: "#9a9a9f"
                             metalness: 0.0
                             roughness: 0.6
                             specularAmount: 0.25
                             cullMode: Material.NoCulling
-                            opacity: modelData.opacity
+                            opacity: opacityValue
                             alphaMode: meshModel.isTransparent ?
                                            PrincipledMaterial.Blend :
                                            PrincipledMaterial.Opaque
@@ -479,9 +554,112 @@ ApplicationWindow {
                     id: freeController
                     anchors.fill: parent
                     controlledObject: cameraRig
-                    mouseEnabled: true
+                    mouseEnabled: false
                     keysEnabled: true
                     acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
+                }
+
+                DragHandler {
+                    id: orbitDragHandler
+                    target: null
+                    acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchScreen | PointerDevice.TouchPad | PointerDevice.Stylus
+                    acceptedButtons: Qt.LeftButton
+                    property real lastX: 0
+                    property real lastY: 0
+                    onActiveChanged: {
+                        lastX = translation.x
+                        lastY = translation.y
+                        if (active)
+                            view3d.forceActiveFocus()
+                    }
+                    onTranslationChanged: {
+                        if (!active)
+                            return
+                        const dx = translation.x - lastX
+                        const dy = translation.y - lastY
+                        lastX = translation.x
+                        lastY = translation.y
+                        window.orbitCamera(dx, dy)
+                    }
+                }
+
+                DragHandler {
+                    id: panDragHandler
+                    target: null
+                    acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                    acceptedButtons: Qt.MiddleButton | Qt.RightButton
+                    property real lastX: 0
+                    property real lastY: 0
+                    onActiveChanged: {
+                        lastX = translation.x
+                        lastY = translation.y
+                        if (active)
+                            view3d.forceActiveFocus()
+                    }
+                    onTranslationChanged: {
+                        if (!active)
+                            return
+                        const dx = translation.x - lastX
+                        const dy = translation.y - lastY
+                        lastX = translation.x
+                        lastY = translation.y
+                        window.panCamera(dx, dy)
+                    }
+                }
+
+                PinchHandler {
+                    id: pinchHandler
+                    target: null
+                    acceptedDevices: PointerDevice.TouchPad | PointerDevice.TouchScreen
+                    minimumPointCount: 2
+                    maximumPointCount: 4
+                    property real lastScale: 1
+                    property real lastRotation: 0
+                    property real lastTx: 0
+                    property real lastTy: 0
+                    onActiveChanged: {
+                        lastScale = 1
+                        lastRotation = 0
+                        lastTx = translation.x
+                        lastTy = translation.y
+                        if (active)
+                            view3d.forceActiveFocus()
+                    }
+                    onScaleChanged: {
+                        if (!active)
+                            return
+                        const delta = scale / lastScale
+                        if (delta !== 0)
+                            window.zoomByFactor(1 / delta)
+                        lastScale = scale
+                    }
+                    onRotationChanged: {
+                        if (!active)
+                            return
+                        const delta = rotation - lastRotation
+                        window.orbitCamera(delta, 0)
+                        lastRotation = rotation
+                    }
+                    onTranslationChanged: {
+                        if (!active)
+                            return
+                        lastTx = translation.x
+                        lastTy = translation.y
+                    }
+                }
+
+                WheelHandler {
+                    id: wheelZoomHandler
+                    target: null
+                    acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                    orientation: Qt.Vertical
+                    onWheel: (event) => {
+                        if (!sceneController.hasVisibleData)
+                            return
+                        const delta = event.pixelDelta.y !== 0 ? event.pixelDelta.y : event.angleDelta.y
+                        window.zoomCamera(delta)
+                        event.accepted = true
+                    }
                 }
 
                 DropArea {
@@ -506,7 +684,7 @@ ApplicationWindow {
             Rectangle {
                 id: modelListPanel
                 z: 10
-                visible: sceneController.meshes.length > 0
+                visible: meshListModel.count > 0
                 color: "#2b2b30cc"
                 radius: 6
                 anchors.left: parent.left
@@ -525,15 +703,17 @@ ApplicationWindow {
                     }
                     ListView {
                         id: modelListView
-                        model: sceneController.meshes
+                        model: meshListModel
                         Layout.fillWidth: true
                         Layout.preferredHeight: Math.min(contentHeight, 260)
                         clip: true
                         ScrollBar.vertical: ScrollBar { }
                         delegate: Rectangle {
                             required property int index
-                            required property var modelData
-                            property var entry: modelData
+                            required property int itemId
+                            required property string displayName
+                            required property bool visibleFlag
+                            required property real opacityValue
                             width: ListView.view.width
                             color: "transparent"
                             implicitHeight: entryLayout.implicitHeight + 4
@@ -544,18 +724,24 @@ ApplicationWindow {
                                 RowLayout {
                                     spacing: 6
                                     CheckBox {
-                                        checked: entry.visible
-                                        onToggled: sceneController.setVisible(entry.id, checked)
+                                        checked: visibleFlag
+                                        onToggled: {
+                                            sceneController.setVisible(itemId, checked)
+                                            window.restoreSceneFocus()
+                                        }
                                     }
                                     Label {
                                         Layout.fillWidth: true
                                         elide: Label.ElideRight
                                         color: "#f5f5f5"
-                                        text: entry.name
+                                        text: displayName
                                     }
                                     ToolButton {
                                         text: qsTr("删")
-                                        onClicked: sceneController.removeMesh(entry.id)
+                                        onClicked: {
+                                            sceneController.removeMesh(itemId)
+                                            window.restoreSceneFocus()
+                                        }
                                     }
                                 }
                                 RowLayout {
@@ -568,11 +754,15 @@ ApplicationWindow {
                                         Layout.fillWidth: true
                                         from: 0.05
                                         to: 1.0
-                                        value: entry.opacity
-                                        onValueChanged: sceneController.setOpacity(entry.id, value)
+                                        value: opacityValue
+                                        onValueChanged: sceneController.setOpacity(itemId, value)
+                                        onPressedChanged: {
+                                            if (!pressed)
+                                                window.restoreSceneFocus()
+                                        }
                                     }
                                     Label {
-                                        text: qsTr("%1%").arg(Math.round(entry.opacity * 100))
+                                        text: qsTr("%1%").arg(Math.round(opacityValue * 100))
                                         color: "#c0c3ca"
                                     }
                                 }
@@ -580,7 +770,7 @@ ApplicationWindow {
                                     Layout.fillWidth: true
                                     Layout.preferredHeight: 1
                                     color: "#3f4048"
-                                    visible: index < sceneController.meshes.length - 1
+                                    visible: index < meshListModel.count - 1
                                 }
                             }
                         }
@@ -628,7 +818,7 @@ ApplicationWindow {
                 Layout.fillWidth: true
                 elide: Label.ElideRight
                 text: sceneController.hasVisibleData ?
-                          qsTr("已加载 %1 个模型").arg(sceneController.meshes.length) :
+                          qsTr("已加载 %1 个模型").arg(meshListModel.count) :
                           qsTr("拖拽或打开 PLY/STL/OBJ 文件")
             }
         }
