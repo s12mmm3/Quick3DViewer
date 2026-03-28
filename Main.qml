@@ -39,6 +39,8 @@ ApplicationWindow {
         property vector3d boundsCenter: Qt.vector3d(0, 0, 0)
         property real boundingRadius: 1.0
         property string lastError: ""
+        property var pivotNode: null
+        property var pendingSources: []
 
         function copyMeshes() {
             meshes = meshes.slice();
@@ -55,13 +57,16 @@ ApplicationWindow {
         function addSingle(source) {
             if (!source || source === "")
                 return;
-            const loader = meshLoaderComponent.createObject(window);
+            if (!pivotNode) {
+                pendingSources = pendingSources.concat([source]);
+                console.warn("场景尚未就绪，已排队等待加载", source);
+                return;
+            }
+            const loader = meshLoaderComponent.createObject(pivotNode);
             if (!loader) {
                 console.error("无法创建 MeshLoader");
                 return;
             }
-            if (typeof pivot !== "undefined")
-                loader.parent = pivot;
             const entry = {
                 id: nextId++,
                 loader: loader,
@@ -122,6 +127,27 @@ ApplicationWindow {
             if (changed) {
                 copyMeshes();
                 recalculateBounds();
+            }
+        }
+
+        function registerPivot(node) {
+            pivotNode = node;
+            reparentExistingLoaders();
+            if (pendingSources.length > 0) {
+                const queue = pendingSources;
+                pendingSources = [];
+                for (let i = 0; i < queue.length; ++i)
+                    addSingle(queue[i]);
+            }
+        }
+
+        function reparentExistingLoaders() {
+            if (!pivotNode)
+                return;
+            for (let i = 0; i < meshes.length; ++i) {
+                const entry = meshes[i];
+                if (entry.loader && entry.loader.parent !== pivotNode)
+                    entry.loader.parent = pivotNode;
             }
         }
 
@@ -306,7 +332,10 @@ ApplicationWindow {
             Action { text: qsTr("&Save") }
             Action { text: qsTr("Save &As...") }
             MenuSeparator { }
-            Action { text: qsTr("&Quit") }
+            Action {
+                text: qsTr("&Quit")
+                onTriggered: Qt.quit()
+            }
         }
         // Menu {
         //     title: qsTr("&Edit")
@@ -384,6 +413,10 @@ ApplicationWindow {
                     tonemapMode: SceneEnvironment.TonemapModeFilmic
                     antialiasingMode: SceneEnvironment.MSAA
                     antialiasingQuality: SceneEnvironment.High
+                    aoStrength: 0.65
+                    aoDistance: 220
+                    aoSoftness: 0.35
+                    probeExposure: 0.75
                 }
 
                 Node {
@@ -399,16 +432,19 @@ ApplicationWindow {
                     }
                 }
 
-                Node { id: pivot }
+                Node {
+                    id: pivot
+                    Component.onCompleted: sceneController.registerPivot(pivot)
+                }
 
                 DirectionalLight {
                     eulerRotation: Qt.vector3d(-35, 45, 0)
-                    brightness: 50
+                    brightness: 24
                 }
 
                 DirectionalLight {
                     eulerRotation: Qt.vector3d(60, -110, 0)
-                    brightness: 30
+                    brightness: 12
                 }
 
                 Repeater3D {
@@ -416,17 +452,24 @@ ApplicationWindow {
                     delegate: Model {
                         id: meshModel
                         required property var modelData
+                        property bool isTransparent: modelData.opacity < 0.999
+                        opacity: modelData.opacity
                         parent: pivot
                         visible: modelData.visible && modelData.loader && modelData.loader.hasData
-                        opacity: modelData.opacity
                         geometry: modelData.loader
                         materials: PrincipledMaterial {
-                            baseColor: "#d9d9d9"
+                            baseColor: "#cfcfcf"
                             metalness: 0.0
-                            roughness: 0.35
+                            roughness: 0.6
+                            specularAmount: 0.25
                             cullMode: Material.NoCulling
-                            alphaMode: PrincipledMaterial.Blend
-                            opacity: meshModel.opacity
+                            opacity: modelData.opacity
+                            alphaMode: meshModel.isTransparent ?
+                                           PrincipledMaterial.Blend :
+                                           PrincipledMaterial.Opaque
+                            depthDrawMode: meshModel.isTransparent ?
+                                               Material.NeverDepthDraw :
+                                               Material.OpaqueOnlyDepthDraw
                         }
                     }
                 }

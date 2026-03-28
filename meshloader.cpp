@@ -652,6 +652,9 @@ void MeshLoader::uploadMesh(const QVector<QVector3D> &positions,
     addAttribute(QQuick3DGeometry::Attribute::TexCoord0Semantic,
                  offsetof(VertexData, tu),
                  QQuick3DGeometry::Attribute::F32Type);
+    addAttribute(QQuick3DGeometry::Attribute::IndexSemantic,
+                 0,
+                 QQuick3DGeometry::Attribute::U32Type);
     setPrimitiveType(QQuick3DGeometry::PrimitiveType::Triangles);
     setBounds(m_boundsMin, m_boundsMax);
     markAllDirty();
