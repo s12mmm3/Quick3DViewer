@@ -23,6 +23,7 @@ ApplicationWindow {
     }
 
     property real lastFitDistance: 400
+    property vector3d lastFitCenter: Qt.vector3d(0, 0, 0)
 
     Component {
         id: meshLoaderComponent
@@ -210,8 +211,7 @@ ApplicationWindow {
                 boundsMax = Qt.vector3d(0, 0, 0);
                 boundsCenter = Qt.vector3d(0, 0, 0);
                 boundingRadius = 1;
-                if (typeof pivot !== "undefined")
-                    pivot.position = Qt.vector3d(0, 0, 0);
+                window.lastFitCenter = Qt.vector3d(0, 0, 0);
             }
             hasVisibleData = valid;
         }
@@ -259,15 +259,16 @@ ApplicationWindow {
         const center = Qt.vector3d((min.x + max.x) * 0.5,
                                    (min.y + max.y) * 0.5,
                                    (min.z + max.z) * 0.5)
-        pivot.position = Qt.vector3d(-center.x, -center.y, -center.z)
+        window.lastFitCenter = center
+        pivot.position = Qt.vector3d(0, 0, 0)
         const size = Qt.vector3d(max.x - min.x, max.y - min.y, max.z - min.z)
         const longest = Math.max(size.x, Math.max(size.y, size.z))
         const radius = Math.max(radiusHint, longest * 0.5, 1)
         const fovRadians = Math.max(5, camera.fieldOfView) * Math.PI / 180
         const fitDistance = radius / Math.tan(fovRadians * 0.5)
         const targetDistance = Math.max(fitDistance * 1.2, 20)
+        cameraRig.position = center
         camera.position = Qt.vector3d(0, 0, targetDistance)
-        cameraRig.position = Qt.vector3d(0, 0, 0)
         cameraRig.eulerRotation = Qt.vector3d(0, 0, 0)
         updateCameraClip(targetDistance)
         updateFreeCameraSettings(targetDistance)
@@ -306,7 +307,7 @@ ApplicationWindow {
             rotation = Qt.vector3d(90, 0, 0)
             break
         }
-        cameraRig.position = Qt.vector3d(0, 0, 0)
+        cameraRig.position = window.lastFitCenter
         cameraRig.eulerRotation = rotation
         camera.position = Qt.vector3d(0, 0, lastFitDistance)
         updateCameraClip(lastFitDistance)
