@@ -105,7 +105,7 @@ ApplicationWindow {
 
             loader.boundsChanged.connect(boundsChanged);
             loader.hasDataChanged.connect(boundsChanged);
-            loader.errorChanged.connect(sceneController.refreshErrorMessage);
+            loader.errorStringChanged.connect(sceneController.refreshErrorMessage);
             loader.source = source;
 
             window.currentFile = source;
