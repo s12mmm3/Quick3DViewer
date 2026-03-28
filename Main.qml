@@ -521,40 +521,68 @@ ApplicationWindow {
 
                 Repeater3D {
                     model: meshListModel
-                    delegate: Model {
-                        id: meshModel
+                    delegate: Node {
+                        id: meshEntry
                         required property int itemId
                         required property var loader
                         required property string displayName
                         required property bool visibleFlag
                         required property real opacityValue
                         property bool isTransparent: opacityValue < 0.999
-                        opacity: opacityValue
-                        parent: pivot
+                        property bool hasTexture: loader && loader.colorTexture && loader.colorTexture.toString().length > 0
                         visible: visibleFlag && loader && loader.hasData
-                        geometry: loader
-                        materials: PrincipledMaterial {
-                            id: meshMaterial
-                            readonly property bool hasTexture: loader && loader.colorTexture && loader.colorTexture.toString().length > 0
-                            baseColor: hasTexture ? "#ffffff" : "#9a9a9f"
-                            metalness: 0.0
-                            roughness: 0.6
-                            specularAmount: 0.25
-                            cullMode: Material.NoCulling
+                        parent: pivot
+
+                        Texture {
+                            id: meshTexture
+                            source: loader ? loader.colorTexture : ""
+                            tilingModeHorizontal: Texture.ClampToEdge
+                            tilingModeVertical: Texture.ClampToEdge
+                        }
+
+                        Model {
+                            id: frontFaceModel
+                            parent: meshEntry
+                            geometry: loader
+                            visible: meshEntry.visible
                             opacity: opacityValue
-                            Texture {
-                                id: baseColorTexture
-                                source: loader ? loader.colorTexture : ""
-                                tilingModeHorizontal: Texture.ClampToEdge
-                                tilingModeVertical: Texture.ClampToEdge
+                            materials: PrincipledMaterial {
+                                baseColor: meshEntry.hasTexture ? "#ffffff" : "#9a9a9f"
+                                baseColorMap: meshEntry.hasTexture ? meshTexture : null
+                                metalness: 0.0
+                                roughness: 0.6
+                                specularAmount: 0.25
+                                cullMode: Material.BackFaceCulling
+                                opacity: opacityValue
+                                alphaMode: meshEntry.isTransparent ?
+                                               PrincipledMaterial.Blend :
+                                               PrincipledMaterial.Opaque
+                                depthDrawMode: meshEntry.isTransparent ?
+                                                   Material.NeverDepthDraw :
+                                                   Material.OpaqueOnlyDepthDraw
                             }
-                            baseColorMap: meshMaterial.hasTexture ? baseColorTexture : null
-                            alphaMode: meshModel.isTransparent ?
-                                           PrincipledMaterial.Blend :
-                                           PrincipledMaterial.Opaque
-                            depthDrawMode: meshModel.isTransparent ?
-                                               Material.NeverDepthDraw :
-                                               Material.OpaqueOnlyDepthDraw
+                        }
+
+                        Model {
+                            id: backFaceModel
+                            parent: meshEntry
+                            geometry: loader
+                            visible: meshEntry.visible
+                            opacity: opacityValue
+                            materials: PrincipledMaterial {
+                                baseColor: "#303046"
+                                metalness: 0.0
+                                roughness: 0.7
+                                specularAmount: 0.1
+                                cullMode: Material.FrontFaceCulling
+                                opacity: opacityValue
+                                alphaMode: meshEntry.isTransparent ?
+                                               PrincipledMaterial.Blend :
+                                               PrincipledMaterial.Opaque
+                                depthDrawMode: meshEntry.isTransparent ?
+                                                   Material.NeverDepthDraw :
+                                                   Material.OpaqueOnlyDepthDraw
+                            }
                         }
                     }
                 }
