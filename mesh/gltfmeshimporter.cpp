@@ -496,7 +496,7 @@ bool writeTempTextureFile(const QByteArray &data,
                           QString *errorOut)
 {
     const QString suffix = suffixForMime(mimeType);
-    QTemporaryFile temp(QDir::tempPath() + QStringLiteral("/Q3DViewer_texXXXXXX") + suffix);
+    QTemporaryFile temp(QDir::tempPath() + QStringLiteral("/Quick3DViewer_texXXXXXX") + suffix);
     temp.setAutoRemove(false);
     if (!temp.open()) {
         MeshImportUtils::assignError(errorOut, QStringLiteral("Failed to create temporary texture file"));

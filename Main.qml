@@ -12,7 +12,7 @@ ApplicationWindow {
     height: 720
     visible: true
     color: "#101014"
-    title: qsTr("Q3DViewer")
+    title: qsTr("Quick3DViewer")
 
 
     property real lastFitDistance: 400
@@ -724,7 +724,7 @@ ApplicationWindow {
                 Text {
                     anchors.centerIn: parent
                     color: "#cfd8dc"
-                    text: qsTr("拖放文件到此处或使用 Ctrl/Cmd+O 打开")
+                    text: qsTr("Drag and drop files here, or use Ctrl/Cmd+O to open.")
                     visible: !sceneController.hasVisibleData
                 }
             }
@@ -739,23 +739,34 @@ ApplicationWindow {
                 anchors.top: parent.top
                 anchors.margins: 12
                 width: 320
-                height: Math.min(parent.height - 24, 320)
+                property bool collapsed: false
+                height: collapsed ? 54 : Math.min(parent.height - 24, 320)
                 ColumnLayout {
                     anchors.fill: parent
                     anchors.margins: 10
                     spacing: 6
-                    Label {
-                        text: qsTr("模型列表")
-                        color: "#f4f6f8"
-                        font.bold: true
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Label {
+                            text: qsTr("Model List")
+                            color: "#f4f6f8"
+                            font.bold: true
+                            Layout.fillWidth: true
+                        }
+                        ToolButton {
+                            text: modelListPanel.collapsed ? qsTr("Expand") : qsTr("Collapse")
+                            icon.name: modelListPanel.collapsed ? "go-down" : "go-up"
+                            onClicked: modelListPanel.collapsed = !modelListPanel.collapsed
+                        }
                     }
                     ListView {
                         id: modelListView
                         model: meshListModel
                         Layout.fillWidth: true
-                        Layout.preferredHeight: Math.min(contentHeight, 260)
+                        Layout.preferredHeight: modelListPanel.collapsed ? 0 : Math.min(contentHeight, 260)
                         clip: true
                         ScrollBar.vertical: ScrollBar { }
+                        visible: !modelListPanel.collapsed
                         delegate: Rectangle {
                             required property int index
                             required property int itemId
@@ -784,18 +795,11 @@ ApplicationWindow {
                                         color: "#f5f5f5"
                                         text: displayName
                                     }
-                                    ToolButton {
-                                        text: qsTr("删")
-                                        onClicked: {
-                                            sceneController.removeMesh(itemId)
-                                            window.restoreSceneFocus()
-                                        }
-                                    }
                                 }
                                 RowLayout {
                                     spacing: 6
                                     Label {
-                                        text: qsTr("透明度")
+                                        text: qsTr("Opacity")
                                         color: "#c0c3ca"
                                     }
                                     Slider {
@@ -812,6 +816,13 @@ ApplicationWindow {
                                     Label {
                                         text: qsTr("%1%").arg(Math.round(opacityValue * 100))
                                         color: "#c0c3ca"
+                                    }
+                                    ToolButton {
+                                        icon.name: "edit-delete"
+                                        onClicked: {
+                                            sceneController.removeMesh(itemId)
+                                            window.restoreSceneFocus()
+                                        }
                                     }
                                 }
                                 Rectangle {
@@ -837,7 +848,7 @@ ApplicationWindow {
                     Layout.fillWidth: true
                 }
                 ToolButton {
-                    text: qsTr("关闭")
+                    text: qsTr("Close")
                     onClicked: sceneController.lastError = ""
                 }
             }
@@ -854,21 +865,12 @@ ApplicationWindow {
             Label {
                 color: "#cfd8dc"
                 text: sceneController.hasVisibleData ?
-                          qsTr("中心 (%1, %2, %3)  半径 %4")
+                          qsTr("Center (%1, %2, %3)  Radius %4")
                               .arg(Number(sceneController.boundsCenter.x).toFixed(2))
                               .arg(Number(sceneController.boundsCenter.y).toFixed(2))
                               .arg(Number(sceneController.boundsCenter.z).toFixed(2))
                               .arg(Number(sceneController.boundingRadius).toFixed(2)) :
-                          qsTr("准备就绪")
-            }
-
-            Label {
-                color: "#cfd8dc"
-                Layout.fillWidth: true
-                elide: Label.ElideRight
-                text: sceneController.hasVisibleData ?
-                          qsTr("已加载 %1 个模型").arg(meshListModel.count) :
-                          qsTr("拖拽或打开 PLY/STL/OBJ 文件")
+                          qsTr("Ready")
             }
         }
     }
