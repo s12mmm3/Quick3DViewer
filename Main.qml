@@ -534,12 +534,21 @@ ApplicationWindow {
                         visible: visibleFlag && loader && loader.hasData
                         geometry: loader
                         materials: PrincipledMaterial {
-                            baseColor: "#9a9a9f"
+                            id: meshMaterial
+                            readonly property bool hasTexture: loader && loader.colorTexture && loader.colorTexture.toString().length > 0
+                            baseColor: hasTexture ? "#ffffff" : "#9a9a9f"
                             metalness: 0.0
                             roughness: 0.6
                             specularAmount: 0.25
                             cullMode: Material.NoCulling
                             opacity: opacityValue
+                            Texture {
+                                id: baseColorTexture
+                                source: loader ? loader.colorTexture : ""
+                                tilingModeHorizontal: Texture.ClampToEdge
+                                tilingModeVertical: Texture.ClampToEdge
+                            }
+                            baseColorMap: meshMaterial.hasTexture ? baseColorTexture : null
                             alphaMode: meshModel.isTransparent ?
                                            PrincipledMaterial.Blend :
                                            PrincipledMaterial.Opaque

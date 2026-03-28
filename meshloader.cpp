@@ -9,6 +9,7 @@
 #include <QHash>
 #include <QTextStream>
 #include <QStringConverter>
+#include <QDir>
 #include <QtMath>
 
 #include <limits>
@@ -48,6 +49,70 @@ inline uint qHash(const VertexKey &key, uint seed = 0) noexcept
     seed ^= ::qHash(key.normalIndex, seed << 2);
     return seed;
 }
+
+struct PlyPropertyDef
+{
+    QString name;
+    QString type;
+    bool isList = false;
+    QString listCountType;
+    QString listValueType;
+};
+
+static double readPlyScalarValue(QDataStream &stream, const QString &type)
+{
+    const QString t = type.toLower();
+    if (t == QLatin1String("char") || t == QLatin1String("int8")) {
+        qint8 value = 0;
+        stream >> value;
+        return value;
+    }
+    if (t == QLatin1String("uchar") || t == QLatin1String("uint8")) {
+        quint8 value = 0;
+        stream >> value;
+        return value;
+    }
+    if (t == QLatin1String("short") || t == QLatin1String("int16")) {
+        qint16 value = 0;
+        stream >> value;
+        return value;
+    }
+    if (t == QLatin1String("ushort") || t == QLatin1String("uint16")) {
+        quint16 value = 0;
+        stream >> value;
+        return value;
+    }
+    if (t == QLatin1String("int") || t == QLatin1String("int32")) {
+        qint32 value = 0;
+        stream >> value;
+        return value;
+    }
+    if (t == QLatin1String("uint") || t == QLatin1String("uint32")) {
+        quint32 value = 0;
+        stream >> value;
+        return value;
+    }
+    if (t == QLatin1String("float") || t == QLatin1String("float32")) {
+        float value = 0.0f;
+        stream >> value;
+        return value;
+    }
+    if (t == QLatin1String("double") || t == QLatin1String("float64")) {
+        double value = 0.0;
+        stream >> value;
+        return value;
+    }
+
+    float fallback = 0.0f;
+    stream >> fallback;
+    return fallback;
+}
+
+static quint32 readPlyCountValue(QDataStream &stream, const QString &type)
+{
+    const double value = readPlyScalarValue(stream, type);
+    return value < 0.0 ? 0u : static_cast<quint32>(value);
+}
 } // namespace
 
 MeshLoader::MeshLoader(QQuick3DObject *parent)
@@ -85,6 +150,11 @@ QString MeshLoader::errorString() const
     return m_error;
 }
 
+QUrl MeshLoader::colorTexture() const
+{
+    return m_colorTexture;
+}
+
 QVector3D MeshLoader::boundsMin() const
 {
     return m_boundsMin;
@@ -120,6 +190,7 @@ void MeshLoader::resetGeometry()
     m_boundingRadius = 0.0f;
     const bool previousHasData = m_hasData;
     m_hasData = false;
+    setColorTexture(QUrl());
     if (previousHasData)
         emit hasDataChanged();
     emit boundsChanged();
@@ -189,6 +260,7 @@ bool MeshLoader::loadObj(const QString &filePath)
     QVector<unsigned int> indices;
 
     QHash<VertexKey, unsigned int> vertexMap;
+    QStringList materialLibraries;
 
     auto parseIndex = [](const QString &token, int count) -> int {
         if (token.isEmpty())
@@ -250,6 +322,13 @@ bool MeshLoader::loadObj(const QString &filePath)
             const float u = tokens[1].toFloat(&okU);
             const float v = tokens[2].toFloat(&okV);
             texCoordsSource.append(okU && okV ? QVector2D(u, v) : QVector2D());
+        } else if (type == QLatin1String("mtllib")) {
+            const QString remainder = line.mid(type.length()).trimmed();
+            if (!remainder.isEmpty()) {
+                const QStringList libs = remainder.split(' ', Qt::SkipEmptyParts);
+                for (const QString &lib : libs)
+                    materialLibraries.append(lib);
+            }
         } else if (type == QLatin1String("f")) {
             if (tokens.size() < 4)
                 continue;
@@ -275,6 +354,7 @@ bool MeshLoader::loadObj(const QString &filePath)
     }
 
     uploadMesh(finalPositions, finalNormals, indices, finalTexCoords);
+    loadObjMaterials(filePath, materialLibraries);
     return true;
 }
 
@@ -426,15 +506,19 @@ bool MeshLoader::loadStlBinary(QFile &file)
 bool MeshLoader::loadPly(const QString &filePath)
 {
     QFile file(filePath);
-    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+    if (!file.open(QIODevice::ReadOnly)) {
         setError(QStringLiteral("Cannot open %1").arg(filePath));
         return false;
     }
 
-    QTextStream stream(&file);
-    stream.setEncoding(QStringConverter::Utf8);
+    auto readTrimmedLine = [&file]() -> QString {
+        if (file.atEnd())
+            return QString();
+        const QByteArray raw = file.readLine();
+        return QString::fromUtf8(raw).trimmed();
+    };
 
-    QString line = stream.readLine().trimmed();
+    QString line = readTrimmedLine();
     if (line != QLatin1String("ply")) {
         setError(QStringLiteral("Not a PLY file"));
         return false;
@@ -442,44 +526,103 @@ bool MeshLoader::loadPly(const QString &filePath)
 
     enum class PlyFormat {
         Unknown,
-        Ascii
+        Ascii,
+        BinaryLittle,
+        BinaryBig
     };
 
     PlyFormat format = PlyFormat::Unknown;
     int vertexCount = 0;
     int faceCount = 0;
     QStringList vertexProperties;
+    QVector<PlyPropertyDef> vertexPropertyDefs;
+    QVector<PlyPropertyDef> facePropertyDefs;
+    int faceIndicesPropertyIndex = -1;
     bool parsingVertexProperties = false;
+    bool parsingFaceProperties = false;
+    QString textureFileHint;
+    qint64 dataStartPos = -1;
 
-    while (!stream.atEnd()) {
-        line = stream.readLine().trimmed();
-        if (line == QLatin1String("end_header"))
+    while (!file.atEnd()) {
+        line = readTrimmedLine();
+        if (line == QLatin1String("end_header")) {
+            dataStartPos = file.pos();
             break;
+        }
+        if (line.startsWith(QStringLiteral("comment"), Qt::CaseInsensitive)) {
+            const QString commentBody = line.mid(QStringLiteral("comment").length()).trimmed();
+            if (commentBody.startsWith(QStringLiteral("TextureFile"), Qt::CaseInsensitive)) {
+                textureFileHint = commentBody.mid(QStringLiteral("TextureFile").length()).trimmed();
+                continue;
+            }
+        }
         if (line.startsWith(QStringLiteral("format"))) {
-            if (line.contains(QStringLiteral("ascii")))
+            if (line.contains(QStringLiteral("ascii"), Qt::CaseInsensitive))
                 format = PlyFormat::Ascii;
+            else if (line.contains(QStringLiteral("binary_little_endian"), Qt::CaseInsensitive))
+                format = PlyFormat::BinaryLittle;
+            else if (line.contains(QStringLiteral("binary_big_endian"), Qt::CaseInsensitive))
+                format = PlyFormat::BinaryBig;
         } else if (line.startsWith(QStringLiteral("element"))) {
             const QStringList tokens = line.split(' ', Qt::SkipEmptyParts);
             if (tokens.size() >= 3) {
                 if (tokens[1] == QLatin1String("vertex")) {
                     vertexCount = tokens[2].toInt();
                     vertexProperties.clear();
+                    vertexPropertyDefs.clear();
                     parsingVertexProperties = true;
+                    parsingFaceProperties = false;
+                } else if (tokens[1] == QLatin1String("face")) {
+                    faceCount = tokens[2].toInt();
+                    facePropertyDefs.clear();
+                    faceIndicesPropertyIndex = -1;
+                    parsingVertexProperties = false;
+                    parsingFaceProperties = true;
                 } else {
                     parsingVertexProperties = false;
-                    if (tokens[1] == QLatin1String("face"))
-                        faceCount = tokens[2].toInt();
+                    parsingFaceProperties = false;
                 }
             }
-        } else if (line.startsWith(QStringLiteral("property")) && parsingVertexProperties) {
+        } else if (line.startsWith(QStringLiteral("property"))) {
             const QStringList tokens = line.split(' ', Qt::SkipEmptyParts);
-            if (tokens.size() >= 3)
-                vertexProperties.append(tokens.last());
+            if (parsingVertexProperties) {
+                if (tokens.size() >= 3) {
+                    PlyPropertyDef prop;
+                    prop.name = tokens.last();
+                    prop.type = tokens.at(tokens.size() - 2);
+                    vertexProperties.append(prop.name);
+                    vertexPropertyDefs.append(prop);
+                }
+            } else if (parsingFaceProperties) {
+                if (tokens.size() >= 5 && tokens[1] == QLatin1String("list")) {
+                    PlyPropertyDef prop;
+                    prop.isList = true;
+                    prop.listCountType = tokens[2];
+                    prop.listValueType = tokens[3];
+                    prop.name = tokens[4];
+                    facePropertyDefs.append(prop);
+                    if (faceIndicesPropertyIndex == -1 &&
+                        (prop.name.contains(QStringLiteral("vertex"), Qt::CaseInsensitive) ||
+                         prop.name.contains(QStringLiteral("indices"), Qt::CaseInsensitive))) {
+                        faceIndicesPropertyIndex = facePropertyDefs.size() - 1;
+                    }
+                } else if (tokens.size() >= 3) {
+                    PlyPropertyDef prop;
+                    prop.name = tokens.last();
+                    prop.type = tokens.at(tokens.size() - 2);
+                    facePropertyDefs.append(prop);
+                }
+            }
         }
     }
 
-    if (format != PlyFormat::Ascii) {
-        setError(QStringLiteral("Only ASCII PLY is supported"));
+    if (format == PlyFormat::Unknown) {
+        setError(QStringLiteral("Unsupported PLY format"));
+        return false;
+    }
+
+    if (dataStartPos < 0) {
+        setError(QStringLiteral("PLY header missing data section"));
         return false;
     }
 
@@ -495,49 +638,138 @@ bool MeshLoader::loadPly(const QString &filePath)
     positions.reserve(vertexCount);
     normals.reserve(vertexCount);
 
-    for (int i = 0; i < vertexCount; ++i) {
-        if (stream.atEnd())
-            break;
-        const QStringList tokens = stream.readLine().split(' ', Qt::SkipEmptyParts);
-        if (tokens.size() < vertexProperties.size())
-            continue;
-        QVector3D pos;
-        QVector3D norm;
-        if (xIndex >= 0)
-            pos.setX(tokens[xIndex].toFloat());
-        if (yIndex >= 0)
-            pos.setY(tokens[yIndex].toFloat());
-        if (zIndex >= 0)
-            pos.setZ(tokens[zIndex].toFloat());
-        if (nxIndex >= 0)
-            norm.setX(tokens[nxIndex].toFloat());
-        if (nyIndex >= 0)
-            norm.setY(tokens[nyIndex].toFloat());
-        if (nzIndex >= 0)
-            norm.setZ(tokens[nzIndex].toFloat());
-        positions.append(pos);
-        normals.append(norm);
-    }
-
     QVector<unsigned int> indices;
     indices.reserve(faceCount * 3);
-    for (int i = 0; i < faceCount; ++i) {
-        if (stream.atEnd())
-            break;
-        const QStringList tokens = stream.readLine().split(' ', Qt::SkipEmptyParts);
-        if (tokens.isEmpty())
-            continue;
-        const int vertexPerFace = tokens.first().toInt();
-        if (tokens.size() < vertexPerFace + 1)
-            continue;
-        QVector<unsigned int> face;
-        face.reserve(vertexPerFace);
-        for (int j = 0; j < vertexPerFace; ++j)
-            face.append(tokens[j + 1].toUInt());
-        for (int j = 1; j + 1 < face.size(); ++j) {
-            indices.append(face[0]);
-            indices.append(face[j]);
-            indices.append(face[j + 1]);
+
+    if (format == PlyFormat::Ascii) {
+        if (!file.seek(dataStartPos)) {
+            setError(QStringLiteral("Failed to seek PLY data section"));
+            return false;
+        }
+        QTextStream dataStream(&file);
+        dataStream.setEncoding(QStringConverter::Utf8);
+        for (int i = 0; i < vertexCount; ++i) {
+            if (dataStream.atEnd())
+                break;
+            const QStringList tokens = dataStream.readLine().split(' ', Qt::SkipEmptyParts);
+            if (tokens.size() < vertexProperties.size())
+                continue;
+            QVector3D pos;
+            QVector3D norm;
+            if (xIndex >= 0)
+                pos.setX(tokens[xIndex].toFloat());
+            if (yIndex >= 0)
+                pos.setY(tokens[yIndex].toFloat());
+            if (zIndex >= 0)
+                pos.setZ(tokens[zIndex].toFloat());
+            if (nxIndex >= 0)
+                norm.setX(tokens[nxIndex].toFloat());
+            if (nyIndex >= 0)
+                norm.setY(tokens[nyIndex].toFloat());
+            if (nzIndex >= 0)
+                norm.setZ(tokens[nzIndex].toFloat());
+            positions.append(pos);
+            normals.append(norm);
+        }
+
+        for (int i = 0; i < faceCount; ++i) {
+            if (dataStream.atEnd())
+                break;
+            const QStringList tokens = dataStream.readLine().split(' ', Qt::SkipEmptyParts);
+            if (tokens.isEmpty())
+                continue;
+            const int vertexPerFace = tokens.first().toInt();
+            if (tokens.size() < vertexPerFace + 1)
+                continue;
+            QVector<unsigned int> face;
+            face.reserve(vertexPerFace);
+            for (int j = 0; j < vertexPerFace; ++j)
+                face.append(tokens[j + 1].toUInt());
+            for (int j = 1; j + 1 < face.size(); ++j) {
+                indices.append(face[0]);
+                indices.append(face[j]);
+                indices.append(face[j + 1]);
+            }
+        }
+    } else {
+        if (!file.seek(dataStartPos)) {
+            setError(QStringLiteral("Failed to seek PLY data section"));
+            return false;
+        }
+        QDataStream bin(&file);
+        bin.setFloatingPointPrecision(QDataStream::SinglePrecision);
+        if (format == PlyFormat::BinaryLittle)
+            bin.setByteOrder(QDataStream::LittleEndian);
+        else
+            bin.setByteOrder(QDataStream::BigEndian);
+
+        if (vertexPropertyDefs.isEmpty()) {
+            setError(QStringLiteral("PLY vertex properties missing"));
+            return false;
+        }
+
+        for (int i = 0; i < vertexCount; ++i) {
+            QVector3D pos;
+            QVector3D norm;
+            for (const PlyPropertyDef &prop : std::as_const(vertexPropertyDefs)) {
+                if (prop.isList) {
+                    const quint32 count = readPlyCountValue(bin, prop.listCountType);
+                    for (quint32 c = 0; c < count; ++c)
+                        readPlyScalarValue(bin, prop.listValueType);
+                    continue;
+                }
+                const double value = readPlyScalarValue(bin, prop.type);
+                const QString name = prop.name.toLower();
+                if (name == QLatin1String("x"))
+                    pos.setX(value);
+                else if (name == QLatin1String("y"))
+                    pos.setY(value);
+                else if (name == QLatin1String("z"))
+                    pos.setZ(value);
+                else if (name == QLatin1String("nx"))
+                    norm.setX(value);
+                else if (name == QLatin1String("ny"))
+                    norm.setY(value);
+                else if (name == QLatin1String("nz"))
+                    norm.setZ(value);
+            }
+            positions.append(pos);
+            normals.append(norm);
+        }
+
+        if (facePropertyDefs.isEmpty() || faceIndicesPropertyIndex < 0) {
+            setError(QStringLiteral("PLY face indices property missing"));
+            return false;
+        }
+
+        for (int i = 0; i < faceCount; ++i) {
+            QVector<unsigned int> face;
+            for (int p = 0; p < facePropertyDefs.size(); ++p) {
+                const PlyPropertyDef &prop = facePropertyDefs.at(p);
+                if (prop.isList) {
+                    const quint32 count = readPlyCountValue(bin, prop.listCountType);
+                    if (p == faceIndicesPropertyIndex) {
+                        face.reserve(count);
+                        for (quint32 c = 0; c < count; ++c)
+                            face.append(readPlyCountValue(bin, prop.listValueType));
+                    } else {
+                        for (quint32 c = 0; c < count; ++c)
+                            readPlyScalarValue(bin, prop.listValueType);
+                    }
+                } else {
+                    readPlyScalarValue(bin, prop.type);
+                }
+            }
+            for (int j = 1; j + 1 < face.size(); ++j) {
+                indices.append(face[0]);
+                indices.append(face[j]);
+                indices.append(face[j + 1]);
+            }
+        }
+
+        if (bin.status() != QDataStream::Ok) {
+            setError(QStringLiteral("Failed to read binary PLY data"));
+            return false;
         }
     }
 
@@ -547,6 +779,29 @@ bool MeshLoader::loadPly(const QString &filePath)
     }
 
     uploadMesh(positions, normals, indices);
+
+    auto applyTextureHint = [&](const QString &hint) -> bool {
+        if (hint.isEmpty())
+            return false;
+        QString texturePath = hint;
+        if (texturePath.startsWith(QLatin1Char('"')) && texturePath.endsWith(QLatin1Char('"')) && texturePath.size() >= 2)
+            texturePath = texturePath.mid(1, texturePath.size() - 2);
+        if (texturePath.isEmpty())
+            return false;
+        QFileInfo geometryInfo(filePath);
+        QString resolved = texturePath;
+        QFileInfo textureInfo(texturePath);
+        if (!textureInfo.isAbsolute())
+            resolved = geometryInfo.dir().absoluteFilePath(texturePath);
+        if (QFile::exists(resolved))
+            setColorTexture(QUrl::fromLocalFile(resolved));
+        else
+            setColorTexture(QUrl::fromUserInput(texturePath));
+        return true;
+    };
+
+    if (!applyTextureHint(textureFileHint))
+        loadPlyMaterial(filePath);
     return true;
 }
 
@@ -711,6 +966,110 @@ void MeshLoader::setError(const QString &message)
         return;
     m_error = message;
     emit errorChanged();
+}
+
+void MeshLoader::setColorTexture(const QUrl &textureUrl)
+{
+    if (m_colorTexture == textureUrl)
+        return;
+    m_colorTexture = textureUrl;
+    emit colorTextureChanged();
+}
+
+void MeshLoader::loadPlyMaterial(const QString &geometryPath)
+{
+    QFileInfo geometryInfo(geometryPath);
+    if (!geometryInfo.exists()) {
+        setColorTexture(QUrl());
+        return;
+    }
+
+    const QString materialPath = geometryInfo.dir().absoluteFilePath(geometryInfo.completeBaseName() + QStringLiteral(".mtl"));
+    if (!parseMaterialFile(materialPath, geometryInfo.dir()))
+        setColorTexture(QUrl());
+}
+
+void MeshLoader::loadObjMaterials(const QString &geometryPath, const QStringList &materialLibs)
+{
+    QFileInfo geometryInfo(geometryPath);
+    if (!geometryInfo.exists()) {
+        setColorTexture(QUrl());
+        return;
+    }
+
+    if (materialLibs.isEmpty()) {
+        setColorTexture(QUrl());
+        return;
+    }
+
+    bool loadedTexture = false;
+    for (const QString &lib : materialLibs) {
+        const QString trimmed = lib.trimmed();
+        if (trimmed.isEmpty())
+            continue;
+        QString materialPath = trimmed;
+        const QFileInfo libInfo(trimmed);
+        if (!libInfo.isAbsolute())
+            materialPath = geometryInfo.dir().absoluteFilePath(trimmed);
+        if (parseMaterialFile(materialPath, geometryInfo.dir())) {
+            loadedTexture = true;
+            break;
+        }
+    }
+
+    if (!loadedTexture)
+        setColorTexture(QUrl());
+}
+
+bool MeshLoader::parseMaterialFile(const QString &materialPath, const QDir &baseDir)
+{
+    QFile materialFile(materialPath);
+    if (!materialFile.exists())
+        return false;
+    if (!materialFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        WARNING << "MeshLoader: unable to open material file" << materialPath;
+        return false;
+    }
+
+    QTextStream stream(&materialFile);
+    stream.setEncoding(QStringConverter::Utf8);
+
+    while (!stream.atEnd()) {
+        QString line = stream.readLine().trimmed();
+        if (line.isEmpty() || line.startsWith(QLatin1Char('#')))
+            continue;
+
+        if (line.startsWith(QStringLiteral("map_Kd"), Qt::CaseInsensitive)) {
+            QString texturePath = line.mid(6).trimmed();
+            if (texturePath.startsWith(QLatin1Char('"')) && texturePath.endsWith(QLatin1Char('"')) && texturePath.size() >= 2) {
+                texturePath = texturePath.mid(1, texturePath.size() - 2);
+            } else {
+                const QStringList parts = texturePath.split(' ', Qt::SkipEmptyParts);
+                for (int i = parts.size() - 1; i >= 0; --i) {
+                    if (!parts.at(i).startsWith('-')) {
+                        texturePath = parts.at(i);
+                        break;
+                    }
+                }
+            }
+
+            if (texturePath.isEmpty())
+                continue;
+
+            QString resolvedPath = texturePath;
+            const QFileInfo texInfo(texturePath);
+            if (!texInfo.isAbsolute())
+                resolvedPath = baseDir.absoluteFilePath(texturePath);
+
+            if (QFile::exists(resolvedPath))
+                setColorTexture(QUrl::fromLocalFile(resolvedPath));
+            else
+                setColorTexture(QUrl::fromUserInput(resolvedPath));
+            return true;
+        }
+    }
+
+    return false;
 }
 
 QVector<unsigned int> MeshLoader::sanitizeIndices(const QVector<unsigned int> &indices,

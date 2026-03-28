@@ -1,9 +1,11 @@
 #pragma once
 
+#include <QDir>
 #include <QFile>
 #include <QQuick3DGeometry>
 #include <QObject>
 #include <QQuick3DObject>
+#include <QStringList>
 #include <QUrl>
 #include <QVector>
 #include <QVector2D>
@@ -14,6 +16,7 @@ class MeshLoader : public QQuick3DGeometry
     Q_OBJECT
     Q_PROPERTY(QUrl source READ source WRITE setSource NOTIFY sourceChanged)
     Q_PROPERTY(QString errorString READ errorString NOTIFY errorChanged)
+    Q_PROPERTY(QUrl colorTexture READ colorTexture NOTIFY colorTextureChanged)
     Q_PROPERTY(QVector3D boundsMin READ boundsMin NOTIFY boundsChanged)
     Q_PROPERTY(QVector3D boundsMax READ boundsMax NOTIFY boundsChanged)
     Q_PROPERTY(QVector3D boundsCenter READ boundsCenter NOTIFY boundsChanged)
@@ -28,6 +31,8 @@ public:
 
     QString errorString() const;
 
+    QUrl colorTexture() const;
+
     QVector3D boundsMin() const;
     QVector3D boundsMax() const;
     QVector3D boundsCenter() const;
@@ -37,6 +42,7 @@ public:
 signals:
     void sourceChanged();
     void errorChanged();
+    void colorTextureChanged();
     void boundsChanged();
     void hasDataChanged();
 
@@ -48,6 +54,9 @@ private:
     bool loadStlAscii(QFile &file);
     bool loadStlBinary(QFile &file);
     bool loadPly(const QString &filePath);
+    void loadPlyMaterial(const QString &geometryPath);
+    void loadObjMaterials(const QString &geometryPath, const QStringList &materialLibs);
+    bool parseMaterialFile(const QString &materialPath, const QDir &baseDir);
 
     void uploadMesh(const QVector<QVector3D> &positions,
                     QVector<QVector3D> normals,
@@ -61,11 +70,13 @@ private:
     static QVector3D computeBoundsCenter(const QVector3D &minBounds, const QVector3D &maxBounds);
 
     void setError(const QString &message);
+    void setColorTexture(const QUrl &textureUrl);
     QVector<unsigned int> sanitizeIndices(const QVector<unsigned int> &indices,
                                           const QVector<QVector3D> &positions) const;
 
     QString m_error;
     QUrl m_source;
+    QUrl m_colorTexture;
     QVector3D m_boundsMin;
     QVector3D m_boundsMax;
     QVector3D m_boundsCenter;
