@@ -61,6 +61,8 @@ private:
     static QVector3D computeBoundsCenter(const QVector3D &minBounds, const QVector3D &maxBounds);
 
     void setError(const QString &message);
+    QVector<unsigned int> sanitizeIndices(const QVector<unsigned int> &indices,
+                                          const QVector<QVector3D> &positions) const;
 
     QString m_error;
     QUrl m_source;

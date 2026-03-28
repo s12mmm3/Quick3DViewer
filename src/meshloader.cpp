@@ -559,6 +559,15 @@ void MeshLoader::uploadMesh(const QVector<QVector3D> &positions,
         return;
     }
 
+    const QVector<unsigned int> cleanedIndices = sanitizeIndices(indices, positions);
+    if (cleanedIndices.size() < 3) {
+        setError(QStringLiteral("Mesh contains no valid triangles"));
+        return;
+    }
+
+    const bool sanitized = cleanedIndices.size() != indices.size();
+    const QVector<unsigned int> &finalIndices = cleanedIndices;
+
     if (normals.size() != positions.size())
         normals.resize(positions.size());
 
@@ -571,14 +580,16 @@ void MeshLoader::uploadMesh(const QVector<QVector3D> &positions,
     }
 
     if (needNormals)
-        computeNormals(normals, indices, positions);
+        computeNormals(normals, finalIndices, positions);
 
     QVector<QVector2D> fullTexCoords = texCoords;
     if (fullTexCoords.size() != positions.size())
         fullTexCoords.resize(positions.size());
     qDebug() << "uploadMesh positions" << positions.size()
-             << "indices" << indices.size()
+             << "indices" << finalIndices.size()
              << "texcoords" << fullTexCoords.size();
+    if (sanitized)
+        qDebug() << "sanitize removed" << (indices.size() - finalIndices.size()) / 3 << "degenerate triangles";
 
     QVector3D minPoint(std::numeric_limits<float>::max(),
                        std::numeric_limits<float>::max(),
@@ -595,19 +606,11 @@ void MeshLoader::uploadMesh(const QVector<QVector3D> &positions,
         maxPoint.setZ(qMax(maxPoint.z(), pos.z()));
     }
 
-    const QVector3D centerOffset = computeBoundsCenter(minPoint, maxPoint);
-    QVector3D centeredMin(std::numeric_limits<float>::max(),
-                          std::numeric_limits<float>::max(),
-                          std::numeric_limits<float>::max());
-    QVector3D centeredMax(std::numeric_limits<float>::lowest(),
-                          std::numeric_limits<float>::lowest(),
-                          std::numeric_limits<float>::lowest());
-
     QByteArray vertexBuffer;
     vertexBuffer.resize(positions.size() * sizeof(VertexData));
     auto *vertexData = reinterpret_cast<VertexData *>(vertexBuffer.data());
     for (int i = 0; i < positions.size(); ++i) {
-        const QVector3D pos = positions.at(i) - centerOffset;
+        const QVector3D pos = positions.at(i);
         const QVector3D n = normals.at(i).isNull() ? QVector3D(0, 1, 0) : normals.at(i).normalized();
         const QVector2D tex = i < fullTexCoords.size() ? fullTexCoords.at(i) : QVector2D();
         vertexData[i].px = pos.x();
@@ -619,24 +622,18 @@ void MeshLoader::uploadMesh(const QVector<QVector3D> &positions,
         vertexData[i].tu = tex.x();
         vertexData[i].tv = tex.y();
 
-        centeredMin.setX(qMin(centeredMin.x(), pos.x()));
-        centeredMin.setY(qMin(centeredMin.y(), pos.y()));
-        centeredMin.setZ(qMin(centeredMin.z(), pos.z()));
-        centeredMax.setX(qMax(centeredMax.x(), pos.x()));
-        centeredMax.setY(qMax(centeredMax.y(), pos.y()));
-        centeredMax.setZ(qMax(centeredMax.z(), pos.z()));
     }
 
     QByteArray indexBuffer;
-    indexBuffer.resize(indices.size() * sizeof(quint32));
+    indexBuffer.resize(finalIndices.size() * sizeof(quint32));
     auto *indexData = reinterpret_cast<quint32 *>(indexBuffer.data());
-    for (int i = 0; i < indices.size(); ++i)
-        indexData[i] = indices.at(i);
+    for (int i = 0; i < finalIndices.size(); ++i)
+        indexData[i] = finalIndices.at(i);
 
-    m_boundsMin = centeredMin;
-    m_boundsMax = centeredMax;
-    m_boundsCenter = computeBoundsCenter(centeredMin, centeredMax);
-    m_boundingRadius = (centeredMax - centeredMin).length() * 0.5f;
+    m_boundsMin = minPoint;
+    m_boundsMax = maxPoint;
+    m_boundsCenter = computeBoundsCenter(minPoint, maxPoint);
+    m_boundingRadius = (maxPoint - minPoint).length() * 0.5f;
     qDebug() << "bounds" << m_boundsMin << m_boundsMax
              << "center" << m_boundsCenter
              << "radius" << m_boundingRadius;
@@ -663,7 +660,7 @@ void MeshLoader::uploadMesh(const QVector<QVector3D> &positions,
         emit hasDataChanged();
     }
     emit boundsChanged();
-    qDebug() << "mesh bounds" << m_boundsMin << m_boundsMax << indices.size() / 3 << "triangles";
+    qDebug() << "mesh bounds" << m_boundsMin << m_boundsMax << finalIndices.size() / 3 << "triangles";
 
 }
 
@@ -710,4 +707,52 @@ void MeshLoader::setError(const QString &message)
         return;
     m_error = message;
     emit errorChanged();
+}
+
+QVector<unsigned int> MeshLoader::sanitizeIndices(const QVector<unsigned int> &indices,
+                                                  const QVector<QVector3D> &positions) const
+{
+    QVector<unsigned int> cleaned;
+    cleaned.reserve(indices.size());
+
+    const int positionCount = positions.size();
+    int removed = 0;
+
+    for (int i = 0; i + 2 < indices.size(); i += 3) {
+        const unsigned int ia = indices.at(i);
+        const unsigned int ib = indices.at(i + 1);
+        const unsigned int ic = indices.at(i + 2);
+
+        if (ia >= static_cast<unsigned int>(positionCount) ||
+            ib >= static_cast<unsigned int>(positionCount) ||
+            ic >= static_cast<unsigned int>(positionCount)) {
+            ++removed;
+            continue;
+        }
+
+        if (ia == ib || ib == ic || ia == ic) {
+            ++removed;
+            continue;
+        }
+
+        const QVector3D &a = positions.at(ia);
+        const QVector3D &b = positions.at(ib);
+        const QVector3D &c = positions.at(ic);
+
+        const QVector3D ab = b - a;
+        const QVector3D ac = c - a;
+        const QVector3D cross = QVector3D::crossProduct(ab, ac);
+        if (cross.lengthSquared() <= 1e-6f) {
+            ++removed;
+            continue;
+        }
+
+        cleaned.append(ia);
+        cleaned.append(ib);
+        cleaned.append(ic);
+    }
+
+    if (removed > 0)
+        qWarning() << "sanitizeIndices dropped" << removed << "degenerate triangles";
+    return cleaned;
 }
