@@ -500,7 +500,7 @@ ApplicationWindow {
                     aoStrength: 0.65
                     aoDistance: 220
                     aoSoftness: 0.35
-                    probeExposure: 0.75
+                    probeExposure: 0
                 }
 
                 Node {
@@ -523,12 +523,12 @@ ApplicationWindow {
 
                 DirectionalLight {
                     eulerRotation: Qt.vector3d(-35, 45, 0)
-                    brightness: 24
+                    brightness: 1.0
                 }
 
                 DirectionalLight {
                     eulerRotation: Qt.vector3d(60, -110, 0)
-                    brightness: 12
+                    brightness: 1.0
                 }
 
                 Repeater3D {
@@ -559,7 +559,7 @@ ApplicationWindow {
                             visible: meshEntry.visible
                             opacity: opacityValue
                             materials: PrincipledMaterial {
-                                baseColor: meshEntry.hasTexture ? "#ffffff" : "#9a9a9f"
+                                baseColor: meshEntry.hasTexture ? "#c0c0c0" : "#9a9a9f"
                                 baseColorMap: meshEntry.hasTexture ? meshTexture : null
                                 metalness: 0.0
                                 roughness: 0.6
